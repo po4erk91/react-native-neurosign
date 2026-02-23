@@ -1,9 +1,4 @@
-import {
-  forwardRef,
-  useCallback,
-  useImperativeHandle,
-  useRef,
-} from 'react';
+import { forwardRef, useCallback, useImperativeHandle, useRef } from 'react';
 import type { StyleProp, ViewStyle } from 'react-native';
 import NativeSignaturePadView, {
   Commands,

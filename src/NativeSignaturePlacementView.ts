@@ -4,8 +4,8 @@ import type {
   Double,
   Int32,
 } from 'react-native/Libraries/Types/CodegenTypes';
-import codegenNativeComponent from 'react-native/Libraries/Utilities/codegenNativeComponent';
 import codegenNativeCommands from 'react-native/Libraries/Utilities/codegenNativeCommands';
+import codegenNativeComponent from 'react-native/Libraries/Utilities/codegenNativeComponent';
 
 export interface NativeSignaturePlacementViewProps extends ViewProps {
   pdfUrl: string;
@@ -40,10 +40,9 @@ interface NativeCommands {
   reset: (viewRef: React.ElementRef<SignaturePlacementViewType>) => void;
 }
 
-export const Commands: NativeCommands =
-  codegenNativeCommands<NativeCommands>({
-    supportedCommands: ['confirm', 'reset'],
-  });
+export const Commands: NativeCommands = codegenNativeCommands<NativeCommands>({
+  supportedCommands: ['confirm', 'reset'],
+});
 
 export default codegenNativeComponent<NativeSignaturePlacementViewProps>(
   'NeurosignSignaturePlacementView'

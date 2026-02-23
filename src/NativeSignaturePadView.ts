@@ -4,8 +4,8 @@ import type {
   Float,
   Int32,
 } from 'react-native/Libraries/Types/CodegenTypes';
-import codegenNativeComponent from 'react-native/Libraries/Utilities/codegenNativeComponent';
 import codegenNativeCommands from 'react-native/Libraries/Utilities/codegenNativeCommands';
+import codegenNativeComponent from 'react-native/Libraries/Utilities/codegenNativeComponent';
 
 export interface NativeSignaturePadViewProps extends ViewProps {
   strokeColor?: string;
@@ -13,12 +13,8 @@ export interface NativeSignaturePadViewProps extends ViewProps {
   backgroundColor?: string;
   minStrokeWidth?: Float;
   maxStrokeWidth?: Float;
-  onDrawingChanged?: DirectEventHandler<
-    Readonly<{ hasDrawing: boolean }>
-  >;
-  onSignatureExported?: DirectEventHandler<
-    Readonly<{ imageUrl: string }>
-  >;
+  onDrawingChanged?: DirectEventHandler<Readonly<{ hasDrawing: boolean }>>;
+  onSignatureExported?: DirectEventHandler<Readonly<{ imageUrl: string }>>;
 }
 
 export type SignaturePadViewType = HostComponent<NativeSignaturePadViewProps>;

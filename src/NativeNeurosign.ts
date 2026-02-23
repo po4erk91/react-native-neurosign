@@ -230,7 +230,11 @@ export interface Spec extends TurboModule {
   /**
    * Export a signature drawing from the native SignaturePad view to an image file.
    */
-  exportSignature(viewTag: number, format: string, quality: number): Promise<{
+  exportSignature(
+    viewTag: number,
+    format: string,
+    quality: number
+  ): Promise<{
     imageUrl: string;
   }>;
 

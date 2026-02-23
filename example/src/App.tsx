@@ -23,7 +23,12 @@ import {
   type SignaturePlacementRef,
 } from 'react-native-neurosign';
 import { launchImageLibrary } from 'react-native-image-picker';
-import { pick, types, isErrorWithCode, errorCodes } from '@react-native-documents/picker';
+import {
+  pick,
+  types,
+  isErrorWithCode,
+  errorCodes,
+} from '@react-native-documents/picker';
 import Share from 'react-native-share';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -90,7 +95,10 @@ export default function App() {
   const [placementPageIndex, setPlacementPageIndex] = useState(0);
   const [placementPageCount, setPlacementPageCount] = useState(1);
   const [collectedPlacements, setCollectedPlacements] = useState<
-    Map<number, { pageIndex: number; x: number; y: number; width: number; height: number }>
+    Map<
+      number,
+      { pageIndex: number; x: number; y: number; width: number; height: number }
+    >
   >(new Map());
 
   // Certificate picker state
@@ -165,7 +173,7 @@ export default function App() {
           height: 280,
         });
         thumbnailUrl = thumb.imageUrl;
-      } catch (_) {}
+      } catch {}
 
       const newDoc: DocumentItem = {
         id: docId,
@@ -277,14 +285,16 @@ export default function App() {
       }
 
       setCollectedPlacements(new Map());
-      Alert.alert('Signatures Added', `Visual signature placed on ${placements.length} page(s)`);
+      Alert.alert(
+        'Signatures Added',
+        `Visual signature placed on ${placements.length} page(s)`
+      );
     } catch (error: any) {
       Alert.alert('Error', error.message || 'Failed to add signature');
     } finally {
       setIsLoading(false);
     }
-  }, [pdfUrl, signatureImageUrl, collectedPlacements, activeDocumentId]
-  );
+  }, [pdfUrl, signatureImageUrl, collectedPlacements, activeDocumentId]);
 
   // ── Step 5: Generate self-signed certificate ──
 
@@ -301,13 +311,17 @@ export default function App() {
         alias: 'demo-cert',
       });
 
-      Alert.alert('Certificate Generated', `Subject: ${cert.subject}\nValid until: ${cert.validTo}`);
+      Alert.alert(
+        'Certificate Generated',
+        `Subject: ${cert.subject}\nValid until: ${cert.validTo}`
+      );
       await loadCertificates();
     } catch (error: any) {
       Alert.alert('Error', error.message || 'Failed to generate certificate');
     } finally {
       setIsLoading(false);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadCertificates = useCallback(async () => {
@@ -410,7 +424,11 @@ export default function App() {
       setImportFileName(result.name ?? 'certificate.pfx');
       setShowImportModal(true);
     } catch (error: any) {
-      if (isErrorWithCode(error) && error.code === errorCodes.OPERATION_CANCELED) return;
+      if (
+        isErrorWithCode(error) &&
+        error.code === errorCodes.OPERATION_CANCELED
+      )
+        return;
       Alert.alert('Error', error.message || 'Failed to pick file');
     }
   }, []);
@@ -435,7 +453,10 @@ export default function App() {
       setImportFileUri(null);
       await loadCertificates();
     } catch (error: any) {
-      Alert.alert('Import Error', error.message || 'Failed to import certificate');
+      Alert.alert(
+        'Import Error',
+        error.message || 'Failed to import certificate'
+      );
     } finally {
       setIsLoading(false);
     }
@@ -473,46 +494,42 @@ export default function App() {
     [requestSign]
   );
 
-  const handleDocumentVerify = useCallback(
-    async (doc: DocumentItem) => {
-      try {
-        setIsLoading(true);
-        setLoadingText('Verifying signatures...');
+  const handleDocumentVerify = useCallback(async (doc: DocumentItem) => {
+    try {
+      setIsLoading(true);
+      setLoadingText('Verifying signatures...');
 
-        const urlToVerify = doc.signedPdfUrl || doc.pdfUrl;
-        const result = await Neurosign.verifySignature(urlToVerify);
-        setVerifyResult(result);
-        setScreen('verify');
-      } catch (error: any) {
-        Alert.alert('Verify Error', error.message || 'Failed to verify');
-      } finally {
-        setIsLoading(false);
-      }
-    },
-    []
-  );
+      const urlToVerify = doc.signedPdfUrl || doc.pdfUrl;
+      const result = await Neurosign.verifySignature(urlToVerify);
+      setVerifyResult(result);
+      setScreen('verify');
+    } catch (error: any) {
+      Alert.alert('Verify Error', error.message || 'Failed to verify');
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
 
-  const handleDocumentShare = useCallback(
-    async (doc: DocumentItem) => {
-      try {
-        const urlToShare = doc.signedPdfUrl || doc.pdfUrl;
-        const shareName = doc.signed ? `${doc.name}_signed.pdf` : `${doc.name}.pdf`;
-        await Share.open({
-          url: urlToShare,
-          type: 'application/pdf',
-          filename: shareName,
-          title: shareName,
-          subject: shareName,
-        });
-      } catch (error: any) {
-        // User cancelled share sheet — not an error
-        if (error?.message !== 'User did not share') {
-          Alert.alert('Share Error', error.message || 'Failed to share');
-        }
+  const handleDocumentShare = useCallback(async (doc: DocumentItem) => {
+    try {
+      const urlToShare = doc.signedPdfUrl || doc.pdfUrl;
+      const shareName = doc.signed
+        ? `${doc.name}_signed.pdf`
+        : `${doc.name}.pdf`;
+      await Share.open({
+        url: urlToShare,
+        type: 'application/pdf',
+        filename: shareName,
+        title: shareName,
+        subject: shareName,
+      });
+    } catch (error: any) {
+      // User cancelled share sheet — not an error
+      if (error?.message !== 'User did not share') {
+        Alert.alert('Share Error', error.message || 'Failed to share');
       }
-    },
-    []
-  );
+    }
+  }, []);
 
   // ── Cleanup ──
 
@@ -621,7 +638,10 @@ export default function App() {
               >
                 <Text style={styles.modalCancel}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={{ padding: 8 }} onPress={handleImportConfirm}>
+              <TouchableOpacity
+                style={{ padding: 8 }}
+                onPress={handleImportConfirm}
+              >
                 <Text style={styles.modalConfirm}>Import</Text>
               </TouchableOpacity>
             </View>
@@ -650,748 +670,845 @@ export default function App() {
   // ── Screen content ──
 
   const renderScreen = () => {
+    if (screen === 'home') {
+      return (
+        <SafeAreaView style={styles.container}>
+          <ScrollView contentContainerStyle={styles.scrollContent}>
+            <Text style={styles.title}>Neurosign</Text>
+            <Text style={styles.subtitle}>
+              PDF Generation & Digital Signing
+            </Text>
 
-  if (screen === 'home') {
-    return (
-      <SafeAreaView style={styles.container}>
-        <ScrollView contentContainerStyle={styles.scrollContent}>
-          <Text style={styles.title}>Neurosign</Text>
-          <Text style={styles.subtitle}>PDF Generation & Digital Signing</Text>
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Full Workflow</Text>
 
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Full Workflow</Text>
+              <TouchableOpacity
+                style={styles.button}
+                onPress={handlePickImages}
+              >
+                <Text style={styles.buttonText}>1. Pick Images</Text>
+                <Text style={styles.buttonHint}>
+                  Select images for PDF generation
+                </Text>
+              </TouchableOpacity>
 
-            <TouchableOpacity style={styles.button} onPress={handlePickImages}>
-              <Text style={styles.buttonText}>1. Pick Images</Text>
-              <Text style={styles.buttonHint}>
-                Select images for PDF generation
-              </Text>
+              <TouchableOpacity
+                style={styles.button}
+                onPress={() => setScreen('signature')}
+              >
+                <Text style={styles.buttonText}>2. Draw Signature</Text>
+                <Text style={styles.buttonHint}>
+                  Use native SignaturePad component
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.button, !pdfUrl && styles.buttonDisabled]}
+                onPress={pdfUrl ? () => requestSign(pdfUrl) : undefined}
+              >
+                <Text style={styles.buttonText}>3. Sign PDF (PAdES)</Text>
+                <Text style={styles.buttonHint}>
+                  {pdfUrl
+                    ? 'Apply cryptographic signature'
+                    : 'Generate PDF first'}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.button,
+                  !signedPdfUrl && !pdfUrl && styles.buttonDisabled,
+                ]}
+                onPress={
+                  signedPdfUrl || pdfUrl ? handleVerifySignature : undefined
+                }
+              >
+                <Text style={styles.buttonText}>4. Verify Signature</Text>
+                <Text style={styles.buttonHint}>
+                  {signedPdfUrl || pdfUrl
+                    ? 'Check signature validity'
+                    : 'Sign a PDF first'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Certificates</Text>
+
+              <TouchableOpacity
+                style={styles.buttonSecondary}
+                onPress={handleGenerateCertificate}
+              >
+                <Text style={styles.buttonSecondaryText}>
+                  Generate Self-Signed Certificate
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.buttonSecondary}
+                onPress={() => {
+                  loadCertificates();
+                  setScreen('certificates');
+                }}
+              >
+                <Text style={styles.buttonSecondaryText}>
+                  View Certificates
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {documents.length > 0 && (
+              <View style={styles.section}>
+                <TouchableOpacity
+                  style={styles.button}
+                  onPress={() => setScreen('documents')}
+                >
+                  <Text style={styles.buttonText}>
+                    Documents ({documents.length})
+                  </Text>
+                  <Text style={styles.buttonHint}>
+                    View, sign, verify, and share your PDFs
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Status</Text>
+              <View style={styles.statusRow}>
+                <Text style={styles.statusLabel}>Images:</Text>
+                <Text style={styles.statusValue}>
+                  {imageUrls.length > 0
+                    ? `${imageUrls.length} selected`
+                    : 'None'}
+                </Text>
+              </View>
+              <View style={styles.statusRow}>
+                <Text style={styles.statusLabel}>PDF:</Text>
+                <Text style={styles.statusValue}>
+                  {pdfUrl ? 'Generated' : 'None'}
+                </Text>
+              </View>
+              <View style={styles.statusRow}>
+                <Text style={styles.statusLabel}>Signature:</Text>
+                <Text style={styles.statusValue}>
+                  {signatureImageUrl ? 'Exported' : 'None'}
+                </Text>
+              </View>
+              <View style={styles.statusRow}>
+                <Text style={styles.statusLabel}>Signed PDF:</Text>
+                <Text style={styles.statusValue}>
+                  {signedPdfUrl ? 'Signed' : 'None'}
+                </Text>
+              </View>
+            </View>
+
+            {(pdfUrl || signedPdfUrl) && (
+              <TouchableOpacity
+                style={styles.buttonDanger}
+                onPress={handleCleanup}
+              >
+                <Text style={styles.buttonDangerText}>Cleanup Temp Files</Text>
+              </TouchableOpacity>
+            )}
+
+            <Text style={styles.footer}>
+              react-native-neurosign v0.1.0 | {Platform.OS} | {Platform.Version}
+            </Text>
+          </ScrollView>
+        </SafeAreaView>
+      );
+    }
+
+    // ── Images Screen ──
+
+    if (screen === 'images') {
+      return (
+        <SafeAreaView style={styles.container}>
+          <View style={styles.header}>
+            <TouchableOpacity onPress={() => setScreen('home')}>
+              <Text style={styles.backButton}>Back</Text>
             </TouchableOpacity>
+            <Text style={styles.headerTitle}>
+              Selected Images ({imageUrls.length})
+            </Text>
+            <TouchableOpacity onPress={handleGeneratePdf}>
+              <Text style={styles.actionButton}>Generate PDF</Text>
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView contentContainerStyle={styles.imageGrid}>
+            {imageUrls.map((url, index) => (
+              <View key={index} style={styles.imageCard}>
+                <Image
+                  source={{ uri: url }}
+                  style={styles.thumbnail}
+                  resizeMode="cover"
+                />
+                <Text style={styles.imageLabel}>Page {index + 1}</Text>
+              </View>
+            ))}
+          </ScrollView>
+        </SafeAreaView>
+      );
+    }
+
+    // ── PDF Screen ──
+
+    if (screen === 'pdf') {
+      return (
+        <SafeAreaView style={styles.container}>
+          <View style={styles.header}>
+            <TouchableOpacity onPress={() => setScreen('home')}>
+              <Text style={styles.backButton}>Back</Text>
+            </TouchableOpacity>
+            <Text style={styles.headerTitle}>PDF Generated</Text>
+            <View style={{ width: 50 }} />
+          </View>
+
+          <ScrollView contentContainerStyle={styles.scrollContent}>
+            <View style={styles.successCard}>
+              <Text style={styles.successIcon}>PDF</Text>
+              <Text style={styles.successTitle}>Document Created</Text>
+              <Text style={styles.successSubtitle}>
+                {imageUrls.length} pages | A4 format
+              </Text>
+              <Text style={styles.fileUrl} numberOfLines={2}>
+                {pdfUrl}
+              </Text>
+            </View>
+
+            <Text style={styles.sectionTitle}>Next Steps</Text>
 
             <TouchableOpacity
               style={styles.button}
               onPress={() => setScreen('signature')}
             >
-              <Text style={styles.buttonText}>2. Draw Signature</Text>
-              <Text style={styles.buttonHint}>
-                Use native SignaturePad component
-              </Text>
+              <Text style={styles.buttonText}>Draw Signature</Text>
+            </TouchableOpacity>
+
+            {signatureImageUrl && (
+              <TouchableOpacity
+                style={styles.button}
+                onPress={handleStartPlacement}
+              >
+                <Text style={styles.buttonText}>Place Signature on PDF</Text>
+                <Text style={styles.buttonHint}>
+                  Drag and resize on document preview
+                </Text>
+              </TouchableOpacity>
+            )}
+
+            <TouchableOpacity
+              style={styles.button}
+              onPress={() =>
+                pdfUrl && requestSign(pdfUrl, activeDocumentId ?? undefined)
+              }
+            >
+              <Text style={styles.buttonText}>Sign with PAdES</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={[styles.button, !pdfUrl && styles.buttonDisabled]}
-              onPress={pdfUrl ? () => requestSign(pdfUrl) : undefined}
+              style={styles.button}
+              onPress={handleVerifySignature}
             >
-              <Text style={styles.buttonText}>3. Sign PDF (PAdES)</Text>
-              <Text style={styles.buttonHint}>
-                {pdfUrl ? 'Apply cryptographic signature' : 'Generate PDF first'}
-              </Text>
+              <Text style={styles.buttonText}>Verify Signatures</Text>
             </TouchableOpacity>
+          </ScrollView>
+        </SafeAreaView>
+      );
+    }
 
+    // ── Signature Screen ──
+
+    if (screen === 'signature') {
+      return (
+        <SafeAreaView style={styles.container}>
+          <View style={styles.header}>
             <TouchableOpacity
-              style={[
-                styles.button,
-                !signedPdfUrl && !pdfUrl && styles.buttonDisabled,
-              ]}
-              onPress={signedPdfUrl || pdfUrl ? handleVerifySignature : undefined}
+              onPress={() => setScreen(pdfUrl ? 'pdf' : 'home')}
             >
-              <Text style={styles.buttonText}>4. Verify Signature</Text>
-              <Text style={styles.buttonHint}>
-                {signedPdfUrl || pdfUrl
-                  ? 'Check signature validity'
-                  : 'Sign a PDF first'}
+              <Text style={styles.backButton}>Back</Text>
+            </TouchableOpacity>
+            <Text style={styles.headerTitle}>Draw Signature</Text>
+            <TouchableOpacity onPress={handleExportSignature}>
+              <Text
+                style={[
+                  styles.actionButton,
+                  !hasDrawing && styles.actionButtonDisabled,
+                ]}
+              >
+                Export
               </Text>
             </TouchableOpacity>
           </View>
 
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Certificates</Text>
+          <View style={styles.signaturePadContainer}>
+            <Text style={styles.signatureHint}>
+              Draw your signature below
+              {Platform.OS === 'ios' ? ' (Apple Pencil supported)' : ''}
+            </Text>
 
+            <View style={styles.signaturePadWrapper}>
+              <SignaturePad
+                ref={signatureRef}
+                strokeColor="#1a1a2e"
+                strokeWidth={2}
+                minStrokeWidth={1}
+                maxStrokeWidth={5}
+                backgroundColor="#FFFFFF"
+                onDrawingChanged={setHasDrawing}
+                onSignatureExported={handleSignatureExported}
+                style={styles.signaturePad}
+              />
+            </View>
+
+            <View style={styles.signatureActions}>
+              <TouchableOpacity
+                style={styles.buttonSmall}
+                onPress={() => signatureRef.current?.undo()}
+              >
+                <Text style={styles.buttonSmallText}>Undo</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.buttonSmall}
+                onPress={() => signatureRef.current?.redo()}
+              >
+                <Text style={styles.buttonSmallText}>Redo</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.buttonSmall, styles.buttonSmallDanger]}
+                onPress={() => signatureRef.current?.clear()}
+              >
+                <Text
+                  style={[styles.buttonSmallText, styles.buttonSmallDangerText]}
+                >
+                  Clear
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {signatureImageUrl && (
+              <View style={styles.signaturePreview}>
+                <Text style={styles.previewLabel}>Exported Signature:</Text>
+                <Image
+                  source={{ uri: signatureImageUrl }}
+                  style={styles.signaturePreviewImage}
+                  resizeMode="contain"
+                />
+              </View>
+            )}
+          </View>
+        </SafeAreaView>
+      );
+    }
+
+    // ── Placement Screen ──
+
+    if (screen === 'placement' && pdfUrl && signatureImageUrl) {
+      return (
+        <View style={styles.container}>
+          <StatusBar barStyle="light-content" backgroundColor="#1a1a2e" />
+          <SafeAreaView style={styles.container}>
+            {/* Header */}
+            <View style={styles.header}>
+              <TouchableOpacity
+                onPress={() => {
+                  setCollectedPlacements(new Map());
+                  setScreen('sign');
+                }}
+              >
+                <Text style={[styles.backButton, { color: '#e94560' }]}>
+                  Cancel
+                </Text>
+              </TouchableOpacity>
+              <Text style={styles.headerTitle}>Place Signature</Text>
+              <TouchableOpacity onPress={() => placementRef.current?.confirm()}>
+                <Text
+                  style={[
+                    styles.backButton,
+                    { color: '#e94560', fontWeight: '700' },
+                  ]}
+                >
+                  {collectedPlacements.has(placementPageIndex)
+                    ? 'Update'
+                    : 'Add'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Native PDF + Signature placement view */}
+            <SignaturePlacement
+              ref={placementRef}
+              pdfUrl={pdfUrl}
+              signatureImageUrl={signatureImageUrl}
+              pageIndex={placementPageIndex}
+              backgroundColor="#0f3460"
+              onPlacementConfirmed={handlePlacementAdd}
+              onPageCount={(count) => setPlacementPageCount(count)}
+              style={{
+                flex: 1,
+                margin: 12,
+                borderRadius: 8,
+                overflow: 'hidden',
+              }}
+            />
+
+            {/* Page navigation */}
+            {placementPageCount > 1 && (
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  paddingVertical: 10,
+                  gap: 20,
+                }}
+              >
+                <TouchableOpacity
+                  onPress={() =>
+                    setPlacementPageIndex((p) => Math.max(0, p - 1))
+                  }
+                  disabled={placementPageIndex === 0}
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: 18,
+                    backgroundColor: '#16213e',
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    opacity: placementPageIndex === 0 ? 0.3 : 1,
+                  }}
+                >
+                  <Text
+                    style={{
+                      color: '#ffffff',
+                      fontSize: 18,
+                      fontWeight: '700',
+                    }}
+                  >
+                    {'<'}
+                  </Text>
+                </TouchableOpacity>
+                <Text style={{ color: '#aaa', fontSize: 14 }}>
+                  Page {placementPageIndex + 1} of {placementPageCount}
+                  {collectedPlacements.has(placementPageIndex) ? ' \u2713' : ''}
+                </Text>
+                <TouchableOpacity
+                  onPress={() =>
+                    setPlacementPageIndex((p) =>
+                      Math.min(placementPageCount - 1, p + 1)
+                    )
+                  }
+                  disabled={placementPageIndex === placementPageCount - 1}
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: 18,
+                    backgroundColor: '#16213e',
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    opacity:
+                      placementPageIndex === placementPageCount - 1 ? 0.3 : 1,
+                  }}
+                >
+                  <Text
+                    style={{
+                      color: '#ffffff',
+                      fontSize: 18,
+                      fontWeight: '700',
+                    }}
+                  >
+                    {'>'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {/* Apply button */}
+            <TouchableOpacity
+              onPress={handleApplyAllPlacements}
+              disabled={collectedPlacements.size === 0}
+              style={{
+                backgroundColor:
+                  collectedPlacements.size > 0 ? '#e94560' : '#333',
+                marginHorizontal: 24,
+                paddingVertical: 14,
+                borderRadius: 10,
+                alignItems: 'center',
+              }}
+            >
+              <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>
+                {collectedPlacements.size > 0
+                  ? `Apply to ${collectedPlacements.size} page(s)`
+                  : 'Tap "Add" to place signature'}
+              </Text>
+            </TouchableOpacity>
+
+            <Text
+              style={{
+                color: '#666',
+                fontSize: 12,
+                textAlign: 'center',
+                paddingVertical: 10,
+              }}
+            >
+              {placementPageCount > 1
+                ? 'Drag to move, pinch to resize. Tap "Add" for each page, then "Apply".'
+                : 'Drag to move, pinch to resize. Tap "Add", then "Apply".'}
+            </Text>
+          </SafeAreaView>
+        </View>
+      );
+    }
+
+    // ── Sign Screen ──
+
+    if (screen === 'sign') {
+      return (
+        <SafeAreaView style={styles.container}>
+          <View style={styles.header}>
+            <TouchableOpacity onPress={() => setScreen('home')}>
+              <Text style={styles.backButton}>Back</Text>
+            </TouchableOpacity>
+            <Text style={styles.headerTitle}>Sign Document</Text>
+            <View style={{ width: 50 }} />
+          </View>
+
+          <ScrollView contentContainerStyle={styles.scrollContent}>
+            <View style={styles.infoCard}>
+              <Text style={styles.infoTitle}>Ready to Sign</Text>
+              <Text style={styles.infoText}>
+                PDF: {pdfUrl ? 'Ready' : 'Not generated'}
+              </Text>
+              <Text style={styles.infoText}>
+                Visual Signature: {signatureImageUrl ? 'Ready' : 'Not drawn'}
+              </Text>
+              <Text style={styles.infoHint}>
+                Visual placement adds an image overlay. Use PAdES signing below
+                for a cryptographic signature that can be verified.
+              </Text>
+            </View>
+
+            {signatureImageUrl && (
+              <TouchableOpacity
+                style={styles.button}
+                onPress={handleStartPlacement}
+              >
+                <Text style={styles.buttonText}>Place Signature on PDF</Text>
+                <Text style={styles.buttonHint}>
+                  Drag and resize on document preview
+                </Text>
+              </TouchableOpacity>
+            )}
+
+            <TouchableOpacity
+              style={styles.button}
+              onPress={() =>
+                pdfUrl && requestSign(pdfUrl, activeDocumentId ?? undefined)
+              }
+            >
+              <Text style={styles.buttonText}>Apply PAdES-B-B Signature</Text>
+              <Text style={styles.buttonHint}>
+                Cryptographic CMS/PKCS#7 signature
+              </Text>
+            </TouchableOpacity>
+
+            {signedPdfUrl && (
+              <View style={styles.successCard}>
+                <Text style={styles.successTitle}>Document Signed</Text>
+                <Text style={styles.fileUrl} numberOfLines={2}>
+                  {signedPdfUrl}
+                </Text>
+
+                <TouchableOpacity
+                  style={[styles.button, { marginTop: 12 }]}
+                  onPress={handleVerifySignature}
+                >
+                  <Text style={styles.buttonText}>Verify Signature</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </ScrollView>
+        </SafeAreaView>
+      );
+    }
+
+    // ── Verify Screen ──
+
+    if (screen === 'verify') {
+      return (
+        <SafeAreaView style={styles.container}>
+          <View style={styles.header}>
+            <TouchableOpacity onPress={() => setScreen('home')}>
+              <Text style={styles.backButton}>Back</Text>
+            </TouchableOpacity>
+            <Text style={styles.headerTitle}>Verification Result</Text>
+            <View style={{ width: 50 }} />
+          </View>
+
+          <ScrollView contentContainerStyle={styles.scrollContent}>
+            {verifyResult && (
+              <>
+                <View
+                  style={[
+                    styles.verifyCard,
+                    verifyResult.signed
+                      ? styles.verifyCardSigned
+                      : styles.verifyCardUnsigned,
+                  ]}
+                >
+                  <Text style={styles.verifyStatus}>
+                    {verifyResult.signed ? 'SIGNED' : 'NOT SIGNED'}
+                  </Text>
+                  <Text style={styles.verifyCount}>
+                    {verifyResult.signatures.length} signature(s) found
+                  </Text>
+                </View>
+
+                {verifyResult.signatures.map((sig, index) => (
+                  <View key={index} style={styles.signatureCard}>
+                    <Text style={styles.signatureCardTitle}>
+                      Signature #{index + 1}
+                    </Text>
+                    <View style={styles.signatureRow}>
+                      <Text style={styles.signatureLabel}>Signer:</Text>
+                      <Text style={styles.signatureValue}>
+                        {sig.signerName}
+                      </Text>
+                    </View>
+                    <View style={styles.signatureRow}>
+                      <Text style={styles.signatureLabel}>Signed at:</Text>
+                      <Text style={styles.signatureValue}>{sig.signedAt}</Text>
+                    </View>
+                    <View style={styles.signatureRow}>
+                      <Text style={styles.signatureLabel}>Valid:</Text>
+                      <Text
+                        style={[
+                          styles.signatureValue,
+                          sig.valid
+                            ? styles.signatureValid
+                            : styles.signatureInvalid,
+                        ]}
+                      >
+                        {sig.valid ? 'Yes' : 'No'}
+                      </Text>
+                    </View>
+                    <View style={styles.signatureRow}>
+                      <Text style={styles.signatureLabel}>Trusted:</Text>
+                      <Text
+                        style={[
+                          styles.signatureValue,
+                          sig.trusted
+                            ? styles.signatureValid
+                            : styles.signatureWarning,
+                        ]}
+                      >
+                        {sig.trusted ? 'Yes' : 'Self-signed'}
+                      </Text>
+                    </View>
+                    {sig.reason ? (
+                      <View style={styles.signatureRow}>
+                        <Text style={styles.signatureLabel}>Reason:</Text>
+                        <Text style={styles.signatureValue}>{sig.reason}</Text>
+                      </View>
+                    ) : null}
+                  </View>
+                ))}
+              </>
+            )}
+          </ScrollView>
+        </SafeAreaView>
+      );
+    }
+
+    // ── Documents Screen ──
+
+    if (screen === 'documents') {
+      return (
+        <SafeAreaView style={styles.container}>
+          <View style={styles.header}>
+            <TouchableOpacity onPress={() => setScreen('home')}>
+              <Text style={styles.backButton}>Back</Text>
+            </TouchableOpacity>
+            <Text style={styles.headerTitle}>Documents</Text>
+            <View style={{ width: 50 }} />
+          </View>
+
+          <ScrollView contentContainerStyle={styles.scrollContent}>
+            {documents.length === 0 ? (
+              <View style={styles.emptyState}>
+                <Text style={styles.emptyStateText}>No documents yet</Text>
+                <Text style={styles.emptyStateHint}>
+                  Generate a PDF to see it here
+                </Text>
+              </View>
+            ) : (
+              documents.map((doc) => (
+                <View key={doc.id} style={styles.docCard}>
+                  <View style={styles.docCardHeader}>
+                    {doc.thumbnailUrl ? (
+                      <Image
+                        source={{ uri: doc.thumbnailUrl }}
+                        style={styles.docThumbnail}
+                        resizeMode="cover"
+                      />
+                    ) : (
+                      <View
+                        style={[
+                          styles.docThumbnail,
+                          styles.docThumbnailPlaceholder,
+                        ]}
+                      >
+                        <Text style={styles.docThumbnailText}>PDF</Text>
+                      </View>
+                    )}
+                    <View style={styles.docInfo}>
+                      <Text style={styles.docName} numberOfLines={1}>
+                        {doc.name}
+                      </Text>
+                      <Text style={styles.docDate}>
+                        {doc.createdAt.toLocaleDateString()}{' '}
+                        {doc.createdAt.toLocaleTimeString([], {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </Text>
+                      <View
+                        style={[
+                          styles.docBadge,
+                          doc.signed
+                            ? styles.docBadgeSigned
+                            : styles.docBadgeUnsigned,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.docBadgeText,
+                            doc.signed
+                              ? styles.docBadgeTextSigned
+                              : styles.docBadgeTextUnsigned,
+                          ]}
+                        >
+                          {doc.signed ? 'Signed' : 'Unsigned'}
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
+
+                  <View style={styles.docActions}>
+                    {!doc.signed && (
+                      <TouchableOpacity
+                        style={styles.docActionBtn}
+                        onPress={() => handleDocumentSign(doc)}
+                      >
+                        <Text style={styles.docActionBtnText}>Sign</Text>
+                      </TouchableOpacity>
+                    )}
+                    <TouchableOpacity
+                      style={styles.docActionBtn}
+                      onPress={() => handleDocumentVerify(doc)}
+                    >
+                      <Text style={styles.docActionBtnText}>Verify</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.docActionBtn, styles.docActionBtnShare]}
+                      onPress={() => handleDocumentShare(doc)}
+                    >
+                      <Text
+                        style={[
+                          styles.docActionBtnText,
+                          styles.docActionBtnShareText,
+                        ]}
+                      >
+                        Share
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ))
+            )}
+          </ScrollView>
+        </SafeAreaView>
+      );
+    }
+
+    // ── Certificates Screen ──
+
+    if (screen === 'certificates') {
+      return (
+        <SafeAreaView style={styles.container}>
+          <View style={styles.header}>
+            <TouchableOpacity onPress={() => setScreen('home')}>
+              <Text style={styles.backButton}>Back</Text>
+            </TouchableOpacity>
+            <Text style={styles.headerTitle}>Certificates</Text>
+            <TouchableOpacity onPress={loadCertificates}>
+              <Text style={styles.actionButton}>Refresh</Text>
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView contentContainerStyle={styles.scrollContent}>
             <TouchableOpacity
               style={styles.buttonSecondary}
               onPress={handleGenerateCertificate}
             >
               <Text style={styles.buttonSecondaryText}>
-                Generate Self-Signed Certificate
+                Generate New Certificate
               </Text>
             </TouchableOpacity>
 
             <TouchableOpacity
               style={styles.buttonSecondary}
-              onPress={() => {
-                loadCertificates();
-                setScreen('certificates');
-              }}
+              onPress={handleImportPfx}
             >
-              <Text style={styles.buttonSecondaryText}>
-                View Certificates
-              </Text>
-            </TouchableOpacity>
-          </View>
-
-          {documents.length > 0 && (
-            <View style={styles.section}>
-              <TouchableOpacity
-                style={styles.button}
-                onPress={() => setScreen('documents')}
-              >
-                <Text style={styles.buttonText}>
-                  Documents ({documents.length})
-                </Text>
-                <Text style={styles.buttonHint}>
-                  View, sign, verify, and share your PDFs
-                </Text>
-              </TouchableOpacity>
-            </View>
-          )}
-
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Status</Text>
-            <View style={styles.statusRow}>
-              <Text style={styles.statusLabel}>Images:</Text>
-              <Text style={styles.statusValue}>
-                {imageUrls.length > 0
-                  ? `${imageUrls.length} selected`
-                  : 'None'}
-              </Text>
-            </View>
-            <View style={styles.statusRow}>
-              <Text style={styles.statusLabel}>PDF:</Text>
-              <Text style={styles.statusValue}>
-                {pdfUrl ? 'Generated' : 'None'}
-              </Text>
-            </View>
-            <View style={styles.statusRow}>
-              <Text style={styles.statusLabel}>Signature:</Text>
-              <Text style={styles.statusValue}>
-                {signatureImageUrl ? 'Exported' : 'None'}
-              </Text>
-            </View>
-            <View style={styles.statusRow}>
-              <Text style={styles.statusLabel}>Signed PDF:</Text>
-              <Text style={styles.statusValue}>
-                {signedPdfUrl ? 'Signed' : 'None'}
-              </Text>
-            </View>
-          </View>
-
-          {(pdfUrl || signedPdfUrl) && (
-            <TouchableOpacity
-              style={styles.buttonDanger}
-              onPress={handleCleanup}
-            >
-              <Text style={styles.buttonDangerText}>Cleanup Temp Files</Text>
-            </TouchableOpacity>
-          )}
-
-          <Text style={styles.footer}>
-            react-native-neurosign v0.1.0 | {Platform.OS} |{' '}
-            {Platform.Version}
-          </Text>
-        </ScrollView>
-      </SafeAreaView>
-    );
-  }
-
-  // ── Images Screen ──
-
-  if (screen === 'images') {
-    return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => setScreen('home')}>
-            <Text style={styles.backButton}>Back</Text>
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>
-            Selected Images ({imageUrls.length})
-          </Text>
-          <TouchableOpacity onPress={handleGeneratePdf}>
-            <Text style={styles.actionButton}>Generate PDF</Text>
-          </TouchableOpacity>
-        </View>
-
-        <ScrollView contentContainerStyle={styles.imageGrid}>
-          {imageUrls.map((url, index) => (
-            <View key={index} style={styles.imageCard}>
-              <Image
-                source={{ uri: url }}
-                style={styles.thumbnail}
-                resizeMode="cover"
-              />
-              <Text style={styles.imageLabel}>Page {index + 1}</Text>
-            </View>
-          ))}
-        </ScrollView>
-      </SafeAreaView>
-    );
-  }
-
-  // ── PDF Screen ──
-
-  if (screen === 'pdf') {
-    return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => setScreen('home')}>
-            <Text style={styles.backButton}>Back</Text>
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>PDF Generated</Text>
-          <View style={{ width: 50 }} />
-        </View>
-
-        <ScrollView contentContainerStyle={styles.scrollContent}>
-          <View style={styles.successCard}>
-            <Text style={styles.successIcon}>PDF</Text>
-            <Text style={styles.successTitle}>Document Created</Text>
-            <Text style={styles.successSubtitle}>
-              {imageUrls.length} pages | A4 format
-            </Text>
-            <Text style={styles.fileUrl} numberOfLines={2}>
-              {pdfUrl}
-            </Text>
-          </View>
-
-          <Text style={styles.sectionTitle}>Next Steps</Text>
-
-          <TouchableOpacity
-            style={styles.button}
-            onPress={() => setScreen('signature')}
-          >
-            <Text style={styles.buttonText}>Draw Signature</Text>
-          </TouchableOpacity>
-
-          {signatureImageUrl && (
-            <TouchableOpacity
-              style={styles.button}
-              onPress={handleStartPlacement}
-            >
-              <Text style={styles.buttonText}>Place Signature on PDF</Text>
-              <Text style={styles.buttonHint}>
-                Drag and resize on document preview
-              </Text>
-            </TouchableOpacity>
-          )}
-
-          <TouchableOpacity
-            style={styles.button}
-            onPress={() => pdfUrl && requestSign(pdfUrl, activeDocumentId ?? undefined)}
-          >
-            <Text style={styles.buttonText}>Sign with PAdES</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.button}
-            onPress={handleVerifySignature}
-          >
-            <Text style={styles.buttonText}>Verify Signatures</Text>
-          </TouchableOpacity>
-        </ScrollView>
-      </SafeAreaView>
-    );
-  }
-
-  // ── Signature Screen ──
-
-  if (screen === 'signature') {
-    return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.header}>
-          <TouchableOpacity
-            onPress={() => setScreen(pdfUrl ? 'pdf' : 'home')}
-          >
-            <Text style={styles.backButton}>Back</Text>
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>Draw Signature</Text>
-          <TouchableOpacity onPress={handleExportSignature}>
-            <Text
-              style={[
-                styles.actionButton,
-                !hasDrawing && styles.actionButtonDisabled,
-              ]}
-            >
-              Export
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.signaturePadContainer}>
-          <Text style={styles.signatureHint}>
-            Draw your signature below
-            {Platform.OS === 'ios' ? ' (Apple Pencil supported)' : ''}
-          </Text>
-
-          <View style={styles.signaturePadWrapper}>
-            <SignaturePad
-              ref={signatureRef}
-              strokeColor="#1a1a2e"
-              strokeWidth={2}
-              minStrokeWidth={1}
-              maxStrokeWidth={5}
-              backgroundColor="#FFFFFF"
-              onDrawingChanged={setHasDrawing}
-              onSignatureExported={handleSignatureExported}
-              style={styles.signaturePad}
-            />
-          </View>
-
-          <View style={styles.signatureActions}>
-            <TouchableOpacity
-              style={styles.buttonSmall}
-              onPress={() => signatureRef.current?.undo()}
-            >
-              <Text style={styles.buttonSmallText}>Undo</Text>
+              <Text style={styles.buttonSecondaryText}>Import .pfx / .p12</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity
-              style={styles.buttonSmall}
-              onPress={() => signatureRef.current?.redo()}
-            >
-              <Text style={styles.buttonSmallText}>Redo</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.buttonSmall, styles.buttonSmallDanger]}
-              onPress={() => signatureRef.current?.clear()}
-            >
-              <Text style={[styles.buttonSmallText, styles.buttonSmallDangerText]}>
-                Clear
-              </Text>
-            </TouchableOpacity>
-          </View>
-
-          {signatureImageUrl && (
-            <View style={styles.signaturePreview}>
-              <Text style={styles.previewLabel}>Exported Signature:</Text>
-              <Image
-                source={{ uri: signatureImageUrl }}
-                style={styles.signaturePreviewImage}
-                resizeMode="contain"
-              />
-            </View>
-          )}
-        </View>
-      </SafeAreaView>
-    );
-  }
-
-  // ── Placement Screen ──
-
-  if (screen === 'placement' && pdfUrl && signatureImageUrl) {
-    return (
-      <View style={styles.container}>
-        <StatusBar barStyle="light-content" backgroundColor="#1a1a2e" />
-        <SafeAreaView style={styles.container}>
-          {/* Header */}
-          <View style={styles.header}>
-            <TouchableOpacity onPress={() => { setCollectedPlacements(new Map()); setScreen('sign'); }}>
-              <Text style={[styles.backButton, { color: '#e94560' }]}>Cancel</Text>
-            </TouchableOpacity>
-            <Text style={styles.headerTitle}>Place Signature</Text>
-            <TouchableOpacity onPress={() => placementRef.current?.confirm()}>
-              <Text style={[styles.backButton, { color: '#e94560', fontWeight: '700' }]}>
-                {collectedPlacements.has(placementPageIndex) ? 'Update' : 'Add'}
-              </Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Native PDF + Signature placement view */}
-          <SignaturePlacement
-            ref={placementRef}
-            pdfUrl={pdfUrl}
-            signatureImageUrl={signatureImageUrl}
-            pageIndex={placementPageIndex}
-            backgroundColor="#0f3460"
-            onPlacementConfirmed={handlePlacementAdd}
-            onPageCount={(count) => setPlacementPageCount(count)}
-            style={{ flex: 1, margin: 12, borderRadius: 8, overflow: 'hidden' }}
-          />
-
-          {/* Page navigation */}
-          {placementPageCount > 1 && (
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 10, gap: 20 }}>
-              <TouchableOpacity
-                onPress={() => setPlacementPageIndex((p) => Math.max(0, p - 1))}
-                disabled={placementPageIndex === 0}
-                style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: '#16213e', justifyContent: 'center', alignItems: 'center', opacity: placementPageIndex === 0 ? 0.3 : 1 }}
-              >
-                <Text style={{ color: '#ffffff', fontSize: 18, fontWeight: '700' }}>{'<'}</Text>
-              </TouchableOpacity>
-              <Text style={{ color: '#aaa', fontSize: 14 }}>
-                Page {placementPageIndex + 1} of {placementPageCount}
-                {collectedPlacements.has(placementPageIndex) ? ' \u2713' : ''}
-              </Text>
-              <TouchableOpacity
-                onPress={() => setPlacementPageIndex((p) => Math.min(placementPageCount - 1, p + 1))}
-                disabled={placementPageIndex === placementPageCount - 1}
-                style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: '#16213e', justifyContent: 'center', alignItems: 'center', opacity: placementPageIndex === placementPageCount - 1 ? 0.3 : 1 }}
-              >
-                <Text style={{ color: '#ffffff', fontSize: 18, fontWeight: '700' }}>{'>'}</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-
-          {/* Apply button */}
-          <TouchableOpacity
-            onPress={handleApplyAllPlacements}
-            disabled={collectedPlacements.size === 0}
-            style={{
-              backgroundColor: collectedPlacements.size > 0 ? '#e94560' : '#333',
-              marginHorizontal: 24,
-              paddingVertical: 14,
-              borderRadius: 10,
-              alignItems: 'center',
-            }}
-          >
-            <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>
-              {collectedPlacements.size > 0
-                ? `Apply to ${collectedPlacements.size} page(s)`
-                : 'Tap "Add" to place signature'}
-            </Text>
-          </TouchableOpacity>
-
-          <Text style={{ color: '#666', fontSize: 12, textAlign: 'center', paddingVertical: 10 }}>
-            {placementPageCount > 1
-              ? 'Drag to move, pinch to resize. Tap "Add" for each page, then "Apply".'
-              : 'Drag to move, pinch to resize. Tap "Add", then "Apply".'}
-          </Text>
-        </SafeAreaView>
-      </View>
-    );
-  }
-
-  // ── Sign Screen ──
-
-  if (screen === 'sign') {
-    return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => setScreen('home')}>
-            <Text style={styles.backButton}>Back</Text>
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>Sign Document</Text>
-          <View style={{ width: 50 }} />
-        </View>
-
-        <ScrollView contentContainerStyle={styles.scrollContent}>
-          <View style={styles.infoCard}>
-            <Text style={styles.infoTitle}>Ready to Sign</Text>
-            <Text style={styles.infoText}>
-              PDF: {pdfUrl ? 'Ready' : 'Not generated'}
-            </Text>
-            <Text style={styles.infoText}>
-              Visual Signature: {signatureImageUrl ? 'Ready' : 'Not drawn'}
-            </Text>
-            <Text style={styles.infoHint}>
-              Visual placement adds an image overlay. Use PAdES signing below
-              for a cryptographic signature that can be verified.
-            </Text>
-          </View>
-
-          {signatureImageUrl && (
-            <TouchableOpacity
-              style={styles.button}
-              onPress={handleStartPlacement}
-            >
-              <Text style={styles.buttonText}>
-                Place Signature on PDF
-              </Text>
-              <Text style={styles.buttonHint}>
-                Drag and resize on document preview
-              </Text>
-            </TouchableOpacity>
-          )}
-
-          <TouchableOpacity
-            style={styles.button}
-            onPress={() => pdfUrl && requestSign(pdfUrl, activeDocumentId ?? undefined)}
-          >
-            <Text style={styles.buttonText}>Apply PAdES-B-B Signature</Text>
-            <Text style={styles.buttonHint}>
-              Cryptographic CMS/PKCS#7 signature
-            </Text>
-          </TouchableOpacity>
-
-          {signedPdfUrl && (
-            <View style={styles.successCard}>
-              <Text style={styles.successTitle}>Document Signed</Text>
-              <Text style={styles.fileUrl} numberOfLines={2}>
-                {signedPdfUrl}
-              </Text>
-
-              <TouchableOpacity
-                style={[styles.button, { marginTop: 12 }]}
-                onPress={handleVerifySignature}
-              >
-                <Text style={styles.buttonText}>Verify Signature</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-        </ScrollView>
-      </SafeAreaView>
-    );
-  }
-
-  // ── Verify Screen ──
-
-  if (screen === 'verify') {
-    return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => setScreen('home')}>
-            <Text style={styles.backButton}>Back</Text>
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>Verification Result</Text>
-          <View style={{ width: 50 }} />
-        </View>
-
-        <ScrollView contentContainerStyle={styles.scrollContent}>
-          {verifyResult && (
-            <>
-              <View
-                style={[
-                  styles.verifyCard,
-                  verifyResult.signed
-                    ? styles.verifyCardSigned
-                    : styles.verifyCardUnsigned,
-                ]}
-              >
-                <Text style={styles.verifyStatus}>
-                  {verifyResult.signed ? 'SIGNED' : 'NOT SIGNED'}
-                </Text>
-                <Text style={styles.verifyCount}>
-                  {verifyResult.signatures.length} signature(s) found
+            {certificates.length === 0 ? (
+              <View style={styles.emptyState}>
+                <Text style={styles.emptyStateText}>No certificates found</Text>
+                <Text style={styles.emptyStateHint}>
+                  Generate a self-signed certificate to get started
                 </Text>
               </View>
-
-              {verifyResult.signatures.map((sig, index) => (
-                <View key={index} style={styles.signatureCard}>
-                  <Text style={styles.signatureCardTitle}>
-                    Signature #{index + 1}
+            ) : (
+              certificates.map((cert, index) => (
+                <View key={index} style={styles.certCard}>
+                  <Text style={styles.certAlias}>{cert.alias}</Text>
+                  <Text style={styles.certDetail}>Subject: {cert.subject}</Text>
+                  <Text style={styles.certDetail}>Issuer: {cert.issuer}</Text>
+                  <Text style={styles.certDetail}>
+                    Valid: {cert.validFrom} - {cert.validTo}
                   </Text>
-                  <View style={styles.signatureRow}>
-                    <Text style={styles.signatureLabel}>Signer:</Text>
-                    <Text style={styles.signatureValue}>{sig.signerName}</Text>
-                  </View>
-                  <View style={styles.signatureRow}>
-                    <Text style={styles.signatureLabel}>Signed at:</Text>
-                    <Text style={styles.signatureValue}>{sig.signedAt}</Text>
-                  </View>
-                  <View style={styles.signatureRow}>
-                    <Text style={styles.signatureLabel}>Valid:</Text>
-                    <Text
-                      style={[
-                        styles.signatureValue,
-                        sig.valid
-                          ? styles.signatureValid
-                          : styles.signatureInvalid,
-                      ]}
-                    >
-                      {sig.valid ? 'Yes' : 'No'}
-                    </Text>
-                  </View>
-                  <View style={styles.signatureRow}>
-                    <Text style={styles.signatureLabel}>Trusted:</Text>
-                    <Text
-                      style={[
-                        styles.signatureValue,
-                        sig.trusted
-                          ? styles.signatureValid
-                          : styles.signatureWarning,
-                      ]}
-                    >
-                      {sig.trusted ? 'Yes' : 'Self-signed'}
-                    </Text>
-                  </View>
-                  {sig.reason ? (
-                    <View style={styles.signatureRow}>
-                      <Text style={styles.signatureLabel}>Reason:</Text>
-                      <Text style={styles.signatureValue}>{sig.reason}</Text>
-                    </View>
-                  ) : null}
-                </View>
-              ))}
-            </>
-          )}
-        </ScrollView>
-      </SafeAreaView>
-    );
-  }
+                  <Text style={styles.certDetail}>
+                    Serial: {cert.serialNumber}
+                  </Text>
 
-  // ── Documents Screen ──
-
-  if (screen === 'documents') {
-    return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => setScreen('home')}>
-            <Text style={styles.backButton}>Back</Text>
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>Documents</Text>
-          <View style={{ width: 50 }} />
-        </View>
-
-        <ScrollView contentContainerStyle={styles.scrollContent}>
-          {documents.length === 0 ? (
-            <View style={styles.emptyState}>
-              <Text style={styles.emptyStateText}>No documents yet</Text>
-              <Text style={styles.emptyStateHint}>
-                Generate a PDF to see it here
-              </Text>
-            </View>
-          ) : (
-            documents.map((doc) => (
-              <View key={doc.id} style={styles.docCard}>
-                <View style={styles.docCardHeader}>
-                  {doc.thumbnailUrl ? (
-                    <Image
-                      source={{ uri: doc.thumbnailUrl }}
-                      style={styles.docThumbnail}
-                      resizeMode="cover"
-                    />
-                  ) : (
-                    <View style={[styles.docThumbnail, styles.docThumbnailPlaceholder]}>
-                      <Text style={styles.docThumbnailText}>PDF</Text>
-                    </View>
-                  )}
-                  <View style={styles.docInfo}>
-                    <Text style={styles.docName} numberOfLines={1}>
-                      {doc.name}
-                    </Text>
-                    <Text style={styles.docDate}>
-                      {doc.createdAt.toLocaleDateString()}{' '}
-                      {doc.createdAt.toLocaleTimeString([], {
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}
-                    </Text>
-                    <View
-                      style={[
-                        styles.docBadge,
-                        doc.signed ? styles.docBadgeSigned : styles.docBadgeUnsigned,
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.docBadgeText,
-                          doc.signed
-                            ? styles.docBadgeTextSigned
-                            : styles.docBadgeTextUnsigned,
-                        ]}
-                      >
-                        {doc.signed ? 'Signed' : 'Unsigned'}
-                      </Text>
-                    </View>
-                  </View>
-                </View>
-
-                <View style={styles.docActions}>
-                  {!doc.signed && (
-                    <TouchableOpacity
-                      style={styles.docActionBtn}
-                      onPress={() => handleDocumentSign(doc)}
-                    >
-                      <Text style={styles.docActionBtnText}>Sign</Text>
-                    </TouchableOpacity>
-                  )}
                   <TouchableOpacity
-                    style={styles.docActionBtn}
-                    onPress={() => handleDocumentVerify(doc)}
+                    style={styles.buttonSmallDanger}
+                    onPress={async () => {
+                      try {
+                        await Neurosign.deleteCertificate(cert.alias);
+                        loadCertificates();
+                      } catch (error: any) {
+                        Alert.alert('Error', error.message);
+                      }
+                    }}
                   >
-                    <Text style={styles.docActionBtnText}>Verify</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.docActionBtn, styles.docActionBtnShare]}
-                    onPress={() => handleDocumentShare(doc)}
-                  >
-                    <Text style={[styles.docActionBtnText, styles.docActionBtnShareText]}>
-                      Share
-                    </Text>
+                    <Text style={styles.buttonSmallDangerText}>Delete</Text>
                   </TouchableOpacity>
                 </View>
-              </View>
-            ))
-          )}
-        </ScrollView>
-      </SafeAreaView>
-    );
-  }
+              ))
+            )}
+          </ScrollView>
+        </SafeAreaView>
+      );
+    }
 
-  // ── Certificates Screen ──
-
-  if (screen === 'certificates') {
-    return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => setScreen('home')}>
-            <Text style={styles.backButton}>Back</Text>
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>Certificates</Text>
-          <TouchableOpacity onPress={loadCertificates}>
-            <Text style={styles.actionButton}>Refresh</Text>
-          </TouchableOpacity>
-        </View>
-
-        <ScrollView contentContainerStyle={styles.scrollContent}>
-          <TouchableOpacity
-            style={styles.buttonSecondary}
-            onPress={handleGenerateCertificate}
-          >
-            <Text style={styles.buttonSecondaryText}>
-              Generate New Certificate
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.buttonSecondary}
-            onPress={handleImportPfx}
-          >
-            <Text style={styles.buttonSecondaryText}>
-              Import .pfx / .p12
-            </Text>
-          </TouchableOpacity>
-
-          {certificates.length === 0 ? (
-            <View style={styles.emptyState}>
-              <Text style={styles.emptyStateText}>No certificates found</Text>
-              <Text style={styles.emptyStateHint}>
-                Generate a self-signed certificate to get started
-              </Text>
-            </View>
-          ) : (
-            certificates.map((cert, index) => (
-              <View key={index} style={styles.certCard}>
-                <Text style={styles.certAlias}>{cert.alias}</Text>
-                <Text style={styles.certDetail}>Subject: {cert.subject}</Text>
-                <Text style={styles.certDetail}>Issuer: {cert.issuer}</Text>
-                <Text style={styles.certDetail}>
-                  Valid: {cert.validFrom} - {cert.validTo}
-                </Text>
-                <Text style={styles.certDetail}>
-                  Serial: {cert.serialNumber}
-                </Text>
-
-                <TouchableOpacity
-                  style={styles.buttonSmallDanger}
-                  onPress={async () => {
-                    try {
-                      await Neurosign.deleteCertificate(cert.alias);
-                      loadCertificates();
-                    } catch (error: any) {
-                      Alert.alert('Error', error.message);
-                    }
-                  }}
-                >
-                  <Text style={styles.buttonSmallDangerText}>Delete</Text>
-                </TouchableOpacity>
-              </View>
-            ))
-          )}
-        </ScrollView>
-      </SafeAreaView>
-    );
-  }
-
-  return null;
+    return null;
   };
 
   return (
