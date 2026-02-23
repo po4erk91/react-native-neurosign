@@ -9,15 +9,17 @@ public class NeurosignImpl: NSObject {
 
     private let fileManager = FileManager.default
 
-    // MARK: - Temp Directory
+    // MARK: - Temp Directory (lazy, thread-safe)
 
-    private var tempDirectory: URL {
+    private lazy var tempDirectory: URL = {
         let dir = fileManager.temporaryDirectory.appendingPathComponent("neurosign", isDirectory: true)
-        if !fileManager.fileExists(atPath: dir.path) {
-            try? fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
+        do {
+            try fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
+        } catch {
+            NSLog("[Neurosign] Failed to create temp directory: %@", error.localizedDescription)
         }
         return dir
-    }
+    }()
 
     // MARK: - Page Size Constants
 
@@ -32,6 +34,22 @@ public class NeurosignImpl: NSObject {
         }
     }
 
+    // MARK: - URL Resolution
+
+    private func resolveFileUrl(_ urlString: String) -> URL? {
+        if let url = URL(string: urlString), url.isFileURL {
+            return url
+        }
+        if urlString.hasPrefix("/") {
+            return URL(fileURLWithPath: urlString)
+        }
+        if urlString.hasPrefix("file://") {
+            let path = String(urlString.dropFirst("file://".count))
+            return URL(fileURLWithPath: path)
+        }
+        return URL(string: urlString)
+    }
+
     // MARK: - generatePdf
 
     public func generatePdf(
@@ -44,7 +62,10 @@ public class NeurosignImpl: NSObject {
         rejecter: @escaping RNRejecter
     ) {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self = self else { return }
+            guard let self = self else {
+                rejecter("INTERNAL_ERROR", "Module deallocated", nil)
+                return
+            }
 
             guard !imageUrls.isEmpty else {
                 rejecter("INVALID_INPUT", "imageUrls array must not be empty", nil)
@@ -61,37 +82,45 @@ public class NeurosignImpl: NSObject {
             )
 
             do {
+                var actualPageCount = 0
                 let pdfData = renderer.pdfData { context in
                     for urlString in imageUrls {
-                        guard let image = self.loadImage(from: urlString) else { continue }
+                        autoreleasepool {
+                            guard let image = self.loadImage(from: urlString) else { return }
+                            actualPageCount += 1
 
-                        if pageSize.uppercased() == "ORIGINAL" {
-                            // Use the image's own size
-                            let imgPageSize = CGSize(
-                                width: image.size.width + margin * 2,
-                                height: image.size.height + margin * 2
-                            )
-                            let pageBounds = CGRect(origin: .zero, size: imgPageSize)
-                            context.beginPage(withBounds: pageBounds, pageInfo: [:])
-                            let drawRect = CGRect(
-                                x: margin,
-                                y: margin,
-                                width: image.size.width,
-                                height: image.size.height
-                            )
-                            image.draw(in: drawRect)
-                        } else {
-                            context.beginPage()
-                            let drawableWidth = targetPageSize.width - margin * 2
-                            let drawableHeight = targetPageSize.height - margin * 2
-                            let drawRect = self.aspectFitRect(
-                                for: image.size,
-                                in: CGSize(width: drawableWidth, height: drawableHeight),
-                                origin: CGPoint(x: margin, y: margin)
-                            )
-                            image.draw(in: drawRect)
+                            if pageSize.uppercased() == "ORIGINAL" {
+                                let imgPageSize = CGSize(
+                                    width: image.size.width + margin * 2,
+                                    height: image.size.height + margin * 2
+                                )
+                                let pageBounds = CGRect(origin: .zero, size: imgPageSize)
+                                context.beginPage(withBounds: pageBounds, pageInfo: [:])
+                                let drawRect = CGRect(
+                                    x: margin,
+                                    y: margin,
+                                    width: image.size.width,
+                                    height: image.size.height
+                                )
+                                image.draw(in: drawRect)
+                            } else {
+                                context.beginPage()
+                                let drawableWidth = targetPageSize.width - margin * 2
+                                let drawableHeight = targetPageSize.height - margin * 2
+                                let drawRect = self.aspectFitRect(
+                                    for: image.size,
+                                    in: CGSize(width: drawableWidth, height: drawableHeight),
+                                    origin: CGPoint(x: margin, y: margin)
+                                )
+                                image.draw(in: drawRect)
+                            }
                         }
                     }
+                }
+
+                guard actualPageCount > 0 else {
+                    rejecter("PDF_GENERATION_FAILED", "No images could be loaded from the provided URLs", nil)
+                    return
                 }
 
                 let outputFileName = fileName.hasSuffix(".pdf") ? fileName : "\(fileName).pdf"
@@ -100,10 +129,9 @@ public class NeurosignImpl: NSObject {
                 )
                 try pdfData.write(to: outputUrl)
 
-                let pageCount = imageUrls.count
                 resolver([
                     "pdfUrl": outputUrl.absoluteString,
-                    "pageCount": pageCount,
+                    "pageCount": actualPageCount,
                 ] as [String: Any])
             } catch {
                 rejecter("PDF_GENERATION_FAILED", error.localizedDescription, error)
@@ -121,9 +149,12 @@ public class NeurosignImpl: NSObject {
         rejecter: @escaping RNRejecter
     ) {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self = self else { return }
+            guard let self = self else {
+                rejecter("INTERNAL_ERROR", "Module deallocated", nil)
+                return
+            }
 
-            guard let pdfFileUrl = URL(string: pdfUrl),
+            guard let pdfFileUrl = self.resolveFileUrl(pdfUrl),
                   let pdfDocument = CGPDFDocument(pdfFileUrl as CFURL) else {
                 rejecter("INVALID_INPUT", "Cannot open PDF at: \(pdfUrl)", nil)
                 return
@@ -179,14 +210,11 @@ public class NeurosignImpl: NSObject {
                         context.beginPage(withBounds: pageBox, pageInfo: [:])
 
                         let cgContext = context.cgContext
-                        // PDF pages are drawn with inverted Y axis
                         cgContext.translateBy(x: 0, y: pageBox.height)
                         cgContext.scaleBy(x: 1, y: -1)
                         cgContext.drawPDFPage(page)
 
-                        // Draw signature if this page has a placement (i is 1-based)
                         if let placement = placementMap[i - 1] {
-                            // Reset transform for drawing signature
                             cgContext.scaleBy(x: 1, y: -1)
                             cgContext.translateBy(x: 0, y: -pageBox.height)
 
@@ -223,9 +251,12 @@ public class NeurosignImpl: NSObject {
         rejecter: @escaping RNRejecter
     ) {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self = self else { return }
+            guard let self = self else {
+                rejecter("INTERNAL_ERROR", "Module deallocated", nil)
+                return
+            }
 
-            guard let pdfFileUrl = URL(string: pdfUrl),
+            guard let pdfFileUrl = self.resolveFileUrl(pdfUrl),
                   let pdfDocument = CGPDFDocument(pdfFileUrl as CFURL) else {
                 rejecter("INVALID_INPUT", "Cannot open PDF at: \(pdfUrl)", nil)
                 return
@@ -238,7 +269,6 @@ public class NeurosignImpl: NSObject {
                 return
             }
 
-            // CGPDFDocument pages are 1-indexed
             guard let page = pdfDocument.page(at: pageIndex + 1) else {
                 rejecter("PDF_GENERATION_FAILED", "Cannot get page \(pageIndex)", nil)
                 return
@@ -247,7 +277,6 @@ public class NeurosignImpl: NSObject {
             let mediaBox = page.getBoxRect(.mediaBox)
             let targetSize = CGSize(width: CGFloat(width), height: CGFloat(height))
 
-            // Aspect-fit scale
             let scaleX = targetSize.width / mediaBox.width
             let scaleY = targetSize.height / mediaBox.height
             let scale = min(scaleX, scaleY)
@@ -304,11 +333,14 @@ public class NeurosignImpl: NSObject {
         rejecter: @escaping RNRejecter
     ) {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self = self else { return }
+            guard let self = self else {
+                rejecter("INTERNAL_ERROR", "Module deallocated", nil)
+                return
+            }
 
             do {
-                // Get signing identity based on certificate type
                 let identity: CertificateManager.SigningIdentity
+                var tempCertAlias: String? = nil
 
                 switch certificateType {
                 case "p12":
@@ -326,8 +358,8 @@ public class NeurosignImpl: NSObject {
                     identity = try CertificateManager.getSigningIdentity(alias: alias)
 
                 case "selfSigned":
-                    // Generate a temporary self-signed cert if not already stored
                     let alias = "temp_selfsigned_\(UUID().uuidString.prefix(8))"
+                    tempCertAlias = alias
                     _ = try CertificateManager.generateSelfSigned(
                         commonName: "Neurosign User",
                         organization: "",
@@ -342,7 +374,7 @@ public class NeurosignImpl: NSObject {
                     return
                 }
 
-                guard let pdfFileUrl = URL(string: pdfUrl) else {
+                guard let pdfFileUrl = self.resolveFileUrl(pdfUrl) else {
                     rejecter("INVALID_INPUT", "Invalid PDF URL: \(pdfUrl)", nil)
                     return
                 }
@@ -360,11 +392,19 @@ public class NeurosignImpl: NSObject {
                     outputUrl: outputUrl
                 )
 
+                // Clean up temp self-signed certificate from Keychain
+                if let alias = tempCertAlias {
+                    _ = try? CertificateManager.deleteCertificate(alias: alias)
+                }
+
+                // Get signer name from certificate
+                let signerName = SecCertificateCopySubjectSummary(identity.certificate) as? String ?? "Neurosign User"
+
                 let formatter = ISO8601DateFormatter()
                 resolver([
                     "pdfUrl": outputUrl.absoluteString,
                     "signatureValid": true,
-                    "signerName": "Neurosign User",
+                    "signerName": signerName,
                     "signedAt": formatter.string(from: Date()),
                 ] as [String: Any])
             } catch {
@@ -380,9 +420,10 @@ public class NeurosignImpl: NSObject {
         resolver: @escaping RNResolver,
         rejecter: @escaping RNRejecter
     ) {
-        DispatchQueue.global(qos: .userInitiated).async {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            _ = self // retain self for consistency
             do {
-                guard let url = URL(string: pdfUrl) else {
+                guard let url = URL(string: pdfUrl) ?? URL(fileURLWithPath: pdfUrl) as URL? else {
                     rejecter("INVALID_INPUT", "Invalid PDF URL: \(pdfUrl)", nil)
                     return
                 }
@@ -409,7 +450,7 @@ public class NeurosignImpl: NSObject {
         }
     }
 
-    // MARK: - Certificate Management
+    // MARK: - Certificate Management (dispatched to background)
 
     public func importCertificate(
         certificatePath: String,
@@ -418,11 +459,13 @@ public class NeurosignImpl: NSObject {
         resolver: @escaping RNResolver,
         rejecter: @escaping RNRejecter
     ) {
-        do {
-            let info = try CertificateManager.importP12(fileUrl: certificatePath, password: password, alias: alias)
-            resolver(info.toDictionary())
-        } catch {
-            rejecter("CERTIFICATE_ERROR", error.localizedDescription, error)
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                let info = try CertificateManager.importP12(fileUrl: certificatePath, password: password, alias: alias)
+                resolver(info.toDictionary())
+            } catch {
+                rejecter("CERTIFICATE_ERROR", error.localizedDescription, error)
+            }
         }
     }
 
@@ -436,18 +479,20 @@ public class NeurosignImpl: NSObject {
         resolver: @escaping RNResolver,
         rejecter: @escaping RNRejecter
     ) {
-        do {
-            let info = try CertificateManager.generateSelfSigned(
-                commonName: commonName,
-                organization: organization,
-                country: country,
-                validityDays: validityDays,
-                alias: alias,
-                keyAlgorithm: keyAlgorithm
-            )
-            resolver(info.toDictionary())
-        } catch {
-            rejecter("CERTIFICATE_ERROR", error.localizedDescription, error)
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                let info = try CertificateManager.generateSelfSigned(
+                    commonName: commonName,
+                    organization: organization,
+                    country: country,
+                    validityDays: validityDays,
+                    alias: alias,
+                    keyAlgorithm: keyAlgorithm
+                )
+                resolver(info.toDictionary())
+            } catch {
+                rejecter("CERTIFICATE_ERROR", error.localizedDescription, error)
+            }
         }
     }
 
@@ -455,8 +500,10 @@ public class NeurosignImpl: NSObject {
         resolver: @escaping RNResolver,
         rejecter: @escaping RNRejecter
     ) {
-        let certs = CertificateManager.listCertificates()
-        resolver(certs.map { $0.toDictionary() })
+        DispatchQueue.global(qos: .userInitiated).async {
+            let certs = CertificateManager.listCertificates()
+            resolver(certs.map { $0.toDictionary() })
+        }
     }
 
     public func deleteCertificate(
@@ -464,11 +511,13 @@ public class NeurosignImpl: NSObject {
         resolver: @escaping RNResolver,
         rejecter: @escaping RNRejecter
     ) {
-        do {
-            let result = try CertificateManager.deleteCertificate(alias: alias)
-            resolver(NSNumber(value: result))
-        } catch {
-            rejecter("CERTIFICATE_ERROR", error.localizedDescription, error)
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                let result = try CertificateManager.deleteCertificate(alias: alias)
+                resolver(NSNumber(value: result))
+            } catch {
+                rejecter("CERTIFICATE_ERROR", error.localizedDescription, error)
+            }
         }
     }
 
@@ -483,9 +532,12 @@ public class NeurosignImpl: NSObject {
         rejecter: @escaping RNRejecter
     ) {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self = self else { return }
+            guard let self = self else {
+                rejecter("INTERNAL_ERROR", "Module deallocated", nil)
+                return
+            }
             do {
-                guard let pdfFileUrl = URL(string: pdfUrl) else {
+                guard let pdfFileUrl = self.resolveFileUrl(pdfUrl) else {
                     rejecter("INVALID_INPUT", "Invalid PDF URL: \(pdfUrl)", nil)
                     return
                 }
@@ -522,9 +574,12 @@ public class NeurosignImpl: NSObject {
         rejecter: @escaping RNRejecter
     ) {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self = self else { return }
+            guard let self = self else {
+                rejecter("INTERNAL_ERROR", "Module deallocated", nil)
+                return
+            }
             do {
-                guard let preparedUrl = URL(string: preparedPdfUrl) else {
+                guard let preparedUrl = self.resolveFileUrl(preparedPdfUrl) else {
                     rejecter("INVALID_INPUT", "Invalid prepared PDF URL", nil)
                     return
                 }
@@ -558,29 +613,36 @@ public class NeurosignImpl: NSObject {
         resolver: @escaping RNResolver,
         rejecter: @escaping RNRejecter
     ) {
-        do {
-            let tempDir = tempDirectory
-            if fileManager.fileExists(atPath: tempDir.path) {
-                try fileManager.removeItem(at: tempDir)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else {
+                rejecter("INTERNAL_ERROR", "Module deallocated", nil)
+                return
             }
-            resolver(NSNumber(value: true))
-        } catch {
-            rejecter("CLEANUP_FAILED", error.localizedDescription, error)
+            do {
+                let tempDir = self.tempDirectory
+                if self.fileManager.fileExists(atPath: tempDir.path) {
+                    try self.fileManager.removeItem(at: tempDir)
+                }
+                resolver(NSNumber(value: true))
+            } catch {
+                rejecter("CLEANUP_FAILED", error.localizedDescription, error)
+            }
         }
     }
 
     // MARK: - Private Helpers
 
     private func loadImage(from urlString: String) -> UIImage? {
-        guard let url = URL(string: urlString) else { return nil }
-
-        if url.isFileURL {
+        if let url = URL(string: urlString), url.isFileURL {
             return UIImage(contentsOfFile: url.path)
         }
 
-        // Handle file:// URLs
+        if urlString.hasPrefix("/") {
+            return UIImage(contentsOfFile: urlString)
+        }
+
         if urlString.hasPrefix("file://") {
-            let path = urlString.replacingOccurrences(of: "file://", with: "")
+            let path = String(urlString.dropFirst("file://".count))
             return UIImage(contentsOfFile: path)
         }
 
@@ -588,6 +650,10 @@ public class NeurosignImpl: NSObject {
     }
 
     private func aspectFitRect(for imageSize: CGSize, in containerSize: CGSize, origin: CGPoint) -> CGRect {
+        guard imageSize.width > 0, imageSize.height > 0 else {
+            return CGRect(origin: origin, size: containerSize)
+        }
+
         let widthRatio = containerSize.width / imageSize.width
         let heightRatio = containerSize.height / imageSize.height
         let scale = min(widthRatio, heightRatio)

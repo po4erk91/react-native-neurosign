@@ -6,8 +6,10 @@ import React
 public class SignaturePadView: UIView {
 
     private var canvasView: PKCanvasView!
-    private var drawingHistory: [PKDrawing] = []
-    private var redoStack: [PKDrawing] = []
+    private var redoStack: [PKStroke] = []
+
+    /// Guards against re-entrant delegate callbacks during programmatic drawing changes.
+    private var isUpdatingDrawing = false
 
     // Props
     public var strokeColor: UIColor = .black {
@@ -61,75 +63,102 @@ public class SignaturePadView: UIView {
     // MARK: - Commands
 
     public func clear() {
-        drawingHistory.append(canvasView.drawing)
+        isUpdatingDrawing = true
         canvasView.drawing = PKDrawing()
         redoStack.removeAll()
+        isUpdatingDrawing = false
         onDrawingChanged?(["hasDrawing": false])
     }
 
     public func undo() {
-        guard !canvasView.drawing.strokes.isEmpty else { return }
-        var current = canvasView.drawing
-        let lastStroke = current.strokes.removeLast()
-        drawingHistory.append(canvasView.drawing)
+        let strokes = canvasView.drawing.strokes
+        guard !strokes.isEmpty else { return }
 
-        // Create a drawing without the last stroke
-        var newDrawing = PKDrawing()
-        if !current.strokes.isEmpty {
-            newDrawing = current
-        }
+        let lastStroke = strokes.last!
+        redoStack.append(lastStroke)
+
+        var newDrawing = canvasView.drawing
+        newDrawing.strokes.removeLast()
+
+        isUpdatingDrawing = true
         canvasView.drawing = newDrawing
+        isUpdatingDrawing = false
 
-        // Store for redo
-        var redoDrawing = canvasView.drawing
-        redoDrawing.strokes.append(lastStroke)
-        redoStack.append(redoDrawing)
-
-        onDrawingChanged?(["hasDrawing": !canvasView.drawing.strokes.isEmpty])
+        onDrawingChanged?(["hasDrawing": !newDrawing.strokes.isEmpty])
     }
 
     public func redo() {
-        guard let redoDrawing = redoStack.popLast() else { return }
-        drawingHistory.append(canvasView.drawing)
-        canvasView.drawing = redoDrawing
-        onDrawingChanged?(["hasDrawing": !canvasView.drawing.strokes.isEmpty])
+        guard let stroke = redoStack.popLast() else { return }
+
+        var newDrawing = canvasView.drawing
+        newDrawing.strokes.append(stroke)
+
+        isUpdatingDrawing = true
+        canvasView.drawing = newDrawing
+        isUpdatingDrawing = false
+
+        onDrawingChanged?(["hasDrawing": true])
     }
 
     public func exportSignature(format: String, quality: Int) {
         let drawing = canvasView.drawing
-        let bounds = drawing.bounds
+        let drawingBounds = drawing.bounds
 
-        guard !bounds.isEmpty else {
+        guard !drawingBounds.isEmpty else {
             onSignatureExported?(["imageUrl": ""])
             return
         }
 
         // Render the drawing to an image with some padding
         let padding: CGFloat = 10
-        let renderBounds = bounds.insetBy(dx: -padding, dy: -padding)
+        let renderBounds = drawingBounds.insetBy(dx: -padding, dy: -padding)
 
         // Force light trait collection so strokes render in their original colors
         let lightTraits = UITraitCollection(userInterfaceStyle: .light)
-        var image: UIImage!
+        let scale = traitCollection.displayScale > 0 ? traitCollection.displayScale : 2.0
+        var image: UIImage?
         lightTraits.performAsCurrent {
-            image = drawing.image(from: renderBounds, scale: UIScreen.main.scale)
+            image = drawing.image(from: renderBounds, scale: scale)
+        }
+
+        guard let renderedImage = image else {
+            onSignatureExported?(["imageUrl": ""])
+            return
         }
 
         // Save to temp directory
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("neurosign", isDirectory: true)
-        try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
 
-        let fileName = "\(UUID().uuidString)_signature.\(format == "png" ? "png" : "png")"
+        do {
+            try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        } catch {
+            onSignatureExported?(["imageUrl": "", "error": error.localizedDescription])
+            return
+        }
+
+        let ext = format == "png" ? "png" : "jpg"
+        let fileName = "\(UUID().uuidString)_signature.\(ext)"
         let fileUrl = tempDir.appendingPathComponent(fileName)
 
         let compressionQuality = CGFloat(quality) / 100.0
-        if let data = format == "png"
-            ? image.pngData()
-            : image.jpegData(compressionQuality: compressionQuality)
-        {
-            try? data.write(to: fileUrl)
+        let data: Data?
+        if format == "png" {
+            data = renderedImage.pngData()
+        } else {
+            data = renderedImage.jpegData(compressionQuality: compressionQuality)
+        }
+
+        guard let imageData = data else {
+            onSignatureExported?(["imageUrl": "", "error": "Failed to encode image"])
+            return
+        }
+
+        do {
+            try imageData.write(to: fileUrl)
             onSignatureExported?(["imageUrl": fileUrl.absoluteString])
+        } catch {
+            onSignatureExported?(["imageUrl": "", "error": error.localizedDescription])
         }
     }
 }
@@ -138,6 +167,7 @@ public class SignaturePadView: UIView {
 
 extension SignaturePadView: PKCanvasViewDelegate {
     public func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
+        guard !isUpdatingDrawing else { return }
         redoStack.removeAll()
         onDrawingChanged?(["hasDrawing": !canvasView.drawing.strokes.isEmpty])
     }

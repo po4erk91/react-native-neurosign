@@ -6,8 +6,6 @@ import Security
 @objcMembers
 public class CertificateManager: NSObject {
 
-    private static let keychainService = "com.neurosign.certificates"
-
     // MARK: - Certificate Info
 
     public struct CertificateInfo {
@@ -39,6 +37,22 @@ public class CertificateManager: NSObject {
         public let certificateData: Data
     }
 
+    // MARK: - Shared URL Parser
+
+    private static func resolveFileUrl(_ fileUrl: String) -> URL? {
+        if let url = URL(string: fileUrl), url.isFileURL {
+            return url
+        }
+        if fileUrl.hasPrefix("/") {
+            return URL(fileURLWithPath: fileUrl)
+        }
+        if fileUrl.hasPrefix("file://") {
+            let path = String(fileUrl.dropFirst("file://".count))
+            return URL(fileURLWithPath: path)
+        }
+        return URL(string: fileUrl)
+    }
+
     // MARK: - Import PKCS#12
 
     public static func importP12(
@@ -46,10 +60,18 @@ public class CertificateManager: NSObject {
         password: String,
         alias: String
     ) throws -> CertificateInfo {
-        guard let url = URL(string: fileUrl) ?? URL(fileURLWithPath: fileUrl.replacingOccurrences(of: "file://", with: "")) as URL?,
-              let p12Data = try? Data(contentsOf: url) else {
+        guard let url = resolveFileUrl(fileUrl) else {
             throw NSError(domain: "Neurosign", code: 1, userInfo: [
-                NSLocalizedDescriptionKey: "Cannot read .p12 file at: \(fileUrl)"
+                NSLocalizedDescriptionKey: "Invalid file URL: \(fileUrl)"
+            ])
+        }
+
+        let p12Data: Data
+        do {
+            p12Data = try Data(contentsOf: url)
+        } catch {
+            throw NSError(domain: "Neurosign", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "Cannot read .p12 file at: \(fileUrl) — \(error.localizedDescription)"
             ])
         }
 
@@ -63,29 +85,31 @@ public class CertificateManager: NSObject {
             ])
         }
 
-        guard let identity = firstItem[kSecImportItemIdentity as String] as! SecIdentity? else {
+        guard let identityRef = firstItem[kSecImportItemIdentity as String] else {
             throw NSError(domain: "Neurosign", code: 3, userInfo: [
                 NSLocalizedDescriptionKey: "No identity found in .p12 file"
             ])
         }
+        // swiftlint:disable:next force_cast
+        let identity = identityRef as! SecIdentity
 
         // Extract certificate from identity
         var certificate: SecCertificate?
-        SecIdentityCopyCertificate(identity, &certificate)
+        let certStatus = SecIdentityCopyCertificate(identity, &certificate)
 
-        guard let cert = certificate else {
+        guard certStatus == errSecSuccess, let cert = certificate else {
             throw NSError(domain: "Neurosign", code: 4, userInfo: [
-                NSLocalizedDescriptionKey: "Cannot extract certificate from identity"
+                NSLocalizedDescriptionKey: "Cannot extract certificate from identity (OSStatus \(certStatus))"
             ])
         }
 
         // Extract private key
         var privateKey: SecKey?
-        SecIdentityCopyPrivateKey(identity, &privateKey)
+        let keyStatus = SecIdentityCopyPrivateKey(identity, &privateKey)
 
-        guard privateKey != nil else {
+        guard keyStatus == errSecSuccess, privateKey != nil else {
             throw NSError(domain: "Neurosign", code: 5, userInfo: [
-                NSLocalizedDescriptionKey: "Cannot extract private key from identity"
+                NSLocalizedDescriptionKey: "Cannot extract private key from identity (OSStatus \(keyStatus))"
             ])
         }
 
@@ -95,7 +119,7 @@ public class CertificateManager: NSObject {
         // Extract certificate chain
         let chain = (firstItem[kSecImportItemCertChain as String] as? [SecCertificate]) ?? [cert]
 
-        return try extractCertificateInfo(from: cert, alias: alias)
+        return try extractCertificateInfo(from: cert, alias: alias, chain: chain)
     }
 
     // MARK: - Generate Self-Signed Certificate
@@ -134,7 +158,11 @@ public class CertificateManager: NSObject {
 
         // Build self-signed X.509 certificate using DER encoding
         let now = Date()
-        let expiry = Calendar.current.date(byAdding: .day, value: validityDays, to: now)!
+        guard let expiry = Calendar.current.date(byAdding: .day, value: validityDays, to: now) else {
+            throw NSError(domain: "Neurosign", code: 12, userInfo: [
+                NSLocalizedDescriptionKey: "Invalid validity period: \(validityDays) days"
+            ])
+        }
 
         let certData = try buildSelfSignedCertificateDER(
             privateKey: privateKey,
@@ -184,22 +212,14 @@ public class CertificateManager: NSObject {
             ])
         }
 
-        return try extractCertificateInfo(from: certificate, alias: alias)
+        return try extractCertificateInfo(from: certificate, alias: alias, chain: nil)
     }
 
     // MARK: - List Certificates
 
     public static func listCertificates() -> [CertificateInfo] {
+        // Use label-prefix filtered query
         let query: [String: Any] = [
-            kSecClass as String: kSecClassCertificate,
-            kSecAttrLabel as String: "com.neurosign.",
-            kSecMatchLimit as String: kSecMatchLimitAll,
-            kSecReturnRef as String: true,
-            kSecReturnAttributes as String: true,
-        ]
-
-        // Broader query - get all certificates with our prefix
-        let broadQuery: [String: Any] = [
             kSecClass as String: kSecClassCertificate,
             kSecMatchLimit as String: kSecMatchLimitAll,
             kSecReturnRef as String: true,
@@ -207,7 +227,7 @@ public class CertificateManager: NSObject {
         ]
 
         var result: CFTypeRef?
-        let status = SecItemCopyMatching(broadQuery as CFDictionary, &result)
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
 
         guard status == errSecSuccess, let items = result as? [[String: Any]] else {
             return []
@@ -216,12 +236,13 @@ public class CertificateManager: NSObject {
         return items.compactMap { item -> CertificateInfo? in
             guard let label = item[kSecAttrLabel as String] as? String,
                   label.hasPrefix("com.neurosign."),
-                  let certRef = item[kSecValueRef as String] else {
+                  let certValue = item[kSecValueRef as String] else {
                 return nil
             }
-            let cert = certRef as! SecCertificate
+            // swiftlint:disable:next force_cast
+            let certRef = certValue as! SecCertificate
             let alias = String(label.dropFirst("com.neurosign.".count))
-            return try? extractCertificateInfo(from: cert, alias: alias)
+            return try? extractCertificateInfo(from: certRef, alias: alias, chain: nil)
         }
     }
 
@@ -233,16 +254,31 @@ public class CertificateManager: NSObject {
             kSecClass as String: kSecClassCertificate,
             kSecAttrLabel as String: "com.neurosign.\(alias)",
         ]
-        SecItemDelete(certQuery as CFDictionary)
+        let certStatus = SecItemDelete(certQuery as CFDictionary)
 
         // Delete private key
         let keyQuery: [String: Any] = [
             kSecClass as String: kSecClassKey,
             kSecAttrLabel as String: "com.neurosign.\(alias).key",
         ]
-        SecItemDelete(keyQuery as CFDictionary)
+        let keyStatus = SecItemDelete(keyQuery as CFDictionary)
 
-        return true
+        // Return true only if at least one item was actually deleted
+        let certDeleted = certStatus == errSecSuccess
+        let keyDeleted = keyStatus == errSecSuccess
+
+        if !certDeleted && certStatus != errSecItemNotFound {
+            throw NSError(domain: "Neurosign", code: 7, userInfo: [
+                NSLocalizedDescriptionKey: "Failed to delete certificate: OSStatus \(certStatus)"
+            ])
+        }
+        if !keyDeleted && keyStatus != errSecItemNotFound {
+            throw NSError(domain: "Neurosign", code: 7, userInfo: [
+                NSLocalizedDescriptionKey: "Failed to delete private key: OSStatus \(keyStatus)"
+            ])
+        }
+
+        return certDeleted || keyDeleted
     }
 
     // MARK: - Get Signing Identity
@@ -258,11 +294,13 @@ public class CertificateManager: NSObject {
         var certResult: CFTypeRef?
         let certStatus = SecItemCopyMatching(certQuery as CFDictionary, &certResult)
 
-        guard certStatus == errSecSuccess, let certificate = certResult as! SecCertificate? else {
+        guard certStatus == errSecSuccess, let certRef = certResult else {
             throw NSError(domain: "Neurosign", code: 20, userInfo: [
                 NSLocalizedDescriptionKey: "Certificate not found for alias: \(alias)"
             ])
         }
+        // swiftlint:disable:next force_cast
+        let certificate = certRef as! SecCertificate
 
         // Find private key
         let keyQuery: [String: Any] = [
@@ -274,11 +312,13 @@ public class CertificateManager: NSObject {
         var keyResult: CFTypeRef?
         let keyStatus = SecItemCopyMatching(keyQuery as CFDictionary, &keyResult)
 
-        guard keyStatus == errSecSuccess, let privateKey = keyResult as! SecKey? else {
+        guard keyStatus == errSecSuccess, let keyRef = keyResult else {
             throw NSError(domain: "Neurosign", code: 21, userInfo: [
                 NSLocalizedDescriptionKey: "Private key not found for alias: \(alias)"
             ])
         }
+        // swiftlint:disable:next force_cast
+        let privateKey = keyRef as! SecKey
 
         let certData = SecCertificateCopyData(certificate) as Data
 
@@ -293,11 +333,10 @@ public class CertificateManager: NSObject {
     // MARK: - Get Signing Identity from P12 file
 
     public static func getSigningIdentityFromP12(filePath: String, password: String) throws -> SigningIdentity {
-        let url: URL
-        if filePath.hasPrefix("file://") {
-            url = URL(string: filePath)!
-        } else {
-            url = URL(fileURLWithPath: filePath)
+        guard let url = resolveFileUrl(filePath) else {
+            throw NSError(domain: "Neurosign", code: 30, userInfo: [
+                NSLocalizedDescriptionKey: "Invalid file path: \(filePath)"
+            ])
         }
 
         let p12Data = try Data(contentsOf: url)
@@ -312,25 +351,27 @@ public class CertificateManager: NSObject {
             ])
         }
 
-        guard let identity = firstItem[kSecImportItemIdentity as String] as! SecIdentity? else {
+        guard let identityRef = firstItem[kSecImportItemIdentity as String] else {
             throw NSError(domain: "Neurosign", code: 31, userInfo: [
                 NSLocalizedDescriptionKey: "No identity in .p12 file"
             ])
         }
+        // swiftlint:disable:next force_cast
+        let identity = identityRef as! SecIdentity
 
         var certificate: SecCertificate?
-        SecIdentityCopyCertificate(identity, &certificate)
-        guard let cert = certificate else {
+        let certOsStatus = SecIdentityCopyCertificate(identity, &certificate)
+        guard certOsStatus == errSecSuccess, let cert = certificate else {
             throw NSError(domain: "Neurosign", code: 32, userInfo: [
-                NSLocalizedDescriptionKey: "Cannot extract certificate"
+                NSLocalizedDescriptionKey: "Cannot extract certificate (OSStatus \(certOsStatus))"
             ])
         }
 
         var privateKey: SecKey?
-        SecIdentityCopyPrivateKey(identity, &privateKey)
-        guard let key = privateKey else {
+        let keyOsStatus = SecIdentityCopyPrivateKey(identity, &privateKey)
+        guard keyOsStatus == errSecSuccess, let key = privateKey else {
             throw NSError(domain: "Neurosign", code: 33, userInfo: [
-                NSLocalizedDescriptionKey: "Cannot extract private key"
+                NSLocalizedDescriptionKey: "Cannot extract private key (OSStatus \(keyOsStatus))"
             ])
         }
 
@@ -365,35 +406,52 @@ public class CertificateManager: NSObject {
 
         // Store private key
         var privateKey: SecKey?
-        SecIdentityCopyPrivateKey(identity, &privateKey)
-        if let key = privateKey {
-            let keyQuery: [String: Any] = [
-                kSecClass as String: kSecClassKey,
-                kSecAttrLabel as String: "com.neurosign.\(alias).key",
-                kSecValueRef as String: key,
-                kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-            ]
-            SecItemDelete(keyQuery as CFDictionary)
-            SecItemAdd(keyQuery as CFDictionary, nil)
+        let keyOsStatus = SecIdentityCopyPrivateKey(identity, &privateKey)
+        guard keyOsStatus == errSecSuccess, let key = privateKey else {
+            throw NSError(domain: "Neurosign", code: 6, userInfo: [
+                NSLocalizedDescriptionKey: "Failed to extract private key for storage (OSStatus \(keyOsStatus))"
+            ])
+        }
+
+        let keyQuery: [String: Any] = [
+            kSecClass as String: kSecClassKey,
+            kSecAttrLabel as String: "com.neurosign.\(alias).key",
+            kSecValueRef as String: key,
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+        ]
+        SecItemDelete(keyQuery as CFDictionary)
+        let keyStatus = SecItemAdd(keyQuery as CFDictionary, nil)
+        if keyStatus != errSecSuccess && keyStatus != errSecDuplicateItem {
+            throw NSError(domain: "Neurosign", code: 6, userInfo: [
+                NSLocalizedDescriptionKey: "Failed to store private key: \(keyStatus)"
+            ])
         }
     }
 
     // MARK: - Private: Extract Certificate Info
 
-    private static func extractCertificateInfo(from certificate: SecCertificate, alias: String) throws -> CertificateInfo {
-        let summary = SecCertificateCopySubjectSummary(certificate) as? String ?? "Unknown"
-
-        // Get certificate details via SecCertificateCopyValues (or parse DER)
+    private static func extractCertificateInfo(from certificate: SecCertificate, alias: String, chain: [SecCertificate]?) throws -> CertificateInfo {
+        let subject = SecCertificateCopySubjectSummary(certificate) as? String ?? "Unknown"
         let certData = SecCertificateCopyData(certificate) as Data
 
-        // Parse basic DER info
+        // Parse real DER info
         let serialNumber = extractSerialNumber(from: certData)
         let dates = extractValidityDates(from: certData)
 
+        // For issuer: try to get from chain or parse DER
+        let issuer: String
+        if let chain = chain, chain.count > 1 {
+            // The last cert in the chain is typically the issuer/CA
+            issuer = SecCertificateCopySubjectSummary(chain.last!) as? String ?? subject
+        } else {
+            // Self-signed or no chain: extract issuer from DER
+            issuer = extractIssuerName(from: certData) ?? subject
+        }
+
         return CertificateInfo(
             alias: alias,
-            subject: summary,
-            issuer: summary, // Self-signed: issuer == subject
+            subject: subject,
+            issuer: issuer,
             validFrom: dates.notBefore,
             validTo: dates.notAfter,
             serialNumber: serialNumber
@@ -402,21 +460,103 @@ public class CertificateManager: NSObject {
 
     // MARK: - Private: DER Parsing Helpers
 
+    /// Extract the actual serial number from the certificate DER.
     private static func extractSerialNumber(from certData: Data) -> String {
-        // Simplified: return hex of first few bytes of certificate data
         let bytes = [UInt8](certData)
-        if bytes.count > 15 {
-            // Serial number is in the TBS certificate structure
-            // For simplicity, use a hash-based identifier
-            let hash = certData.prefix(20).map { String(format: "%02X", $0) }.joined(separator: ":")
-            return hash
+        guard bytes.count > 10 else { return "unknown" }
+
+        var pos = skipTag(bytes: bytes, offset: 0) // outer SEQUENCE
+        pos = skipTag(bytes: bytes, offset: pos)    // TBS SEQUENCE
+
+        // Skip version [0] if present
+        if pos < bytes.count && bytes[pos] == 0xA0 {
+            pos = skipTLVFull(bytes: bytes, offset: pos)
         }
-        return "unknown"
+
+        // Read serial number INTEGER
+        guard pos < bytes.count, bytes[pos] == 0x02 else { return "unknown" }
+        pos += 1 // skip tag
+        guard pos < bytes.count else { return "unknown" }
+
+        let length: Int
+        if bytes[pos] & 0x80 == 0 {
+            length = Int(bytes[pos])
+            pos += 1
+        } else {
+            let numLenBytes = Int(bytes[pos] & 0x7F)
+            pos += 1
+            var len = 0
+            for i in 0..<numLenBytes {
+                guard pos + i < bytes.count else { return "unknown" }
+                len = (len << 8) | Int(bytes[pos + i])
+            }
+            pos += numLenBytes
+            length = len
+        }
+
+        guard pos + length <= bytes.count else { return "unknown" }
+        let serialBytes = bytes[pos..<(pos + length)]
+        return serialBytes.map { String(format: "%02X", $0) }.joined(separator: ":")
     }
 
+    /// Extract validity dates from the certificate DER structure.
     private static func extractValidityDates(from certData: Data) -> (notBefore: String, notAfter: String) {
-        // Use the current date range as a fallback
+        let bytes = [UInt8](certData)
         let formatter = ISO8601DateFormatter()
+
+        guard bytes.count > 10 else {
+            return fallbackDates(formatter: formatter)
+        }
+
+        var pos = skipTag(bytes: bytes, offset: 0) // outer SEQUENCE
+        pos = skipTag(bytes: bytes, offset: pos)    // TBS SEQUENCE
+
+        // Skip version [0] if present
+        if pos < bytes.count && bytes[pos] == 0xA0 {
+            pos = skipTLVFull(bytes: bytes, offset: pos)
+        }
+
+        // Skip serial number
+        pos = skipTLVFull(bytes: bytes, offset: pos)
+
+        // Skip signature algorithm
+        pos = skipTLVFull(bytes: bytes, offset: pos)
+
+        // Skip issuer
+        pos = skipTLVFull(bytes: bytes, offset: pos)
+
+        // Now at Validity SEQUENCE
+        guard pos < bytes.count, bytes[pos] == 0x30 else {
+            return fallbackDates(formatter: formatter)
+        }
+
+        let validityContentStart = skipTag(bytes: bytes, offset: pos)
+
+        // Parse notBefore
+        let notBefore = parseDERTime(bytes: bytes, offset: validityContentStart)
+        let notBeforeEnd = skipTLVFull(bytes: bytes, offset: validityContentStart)
+
+        // Parse notAfter
+        let notAfter = parseDERTime(bytes: bytes, offset: notBeforeEnd)
+
+        let notBeforeStr: String
+        if let date = notBefore {
+            notBeforeStr = formatter.string(from: date)
+        } else {
+            notBeforeStr = formatter.string(from: Date())
+        }
+
+        let notAfterStr: String
+        if let date = notAfter {
+            notAfterStr = formatter.string(from: date)
+        } else {
+            notAfterStr = formatter.string(from: Date().addingTimeInterval(365 * 24 * 60 * 60))
+        }
+
+        return (notBefore: notBeforeStr, notAfter: notAfterStr)
+    }
+
+    private static func fallbackDates(formatter: ISO8601DateFormatter) -> (notBefore: String, notAfter: String) {
         let now = Date()
         return (
             notBefore: formatter.string(from: now),
@@ -424,10 +564,164 @@ public class CertificateManager: NSObject {
         )
     }
 
+    /// Parse a UTCTime or GeneralizedTime from DER bytes.
+    private static func parseDERTime(bytes: [UInt8], offset: Int) -> Date? {
+        guard offset < bytes.count else { return nil }
+        let tag = bytes[offset]
+        var pos = offset + 1
+        guard pos < bytes.count else { return nil }
+
+        let length: Int
+        if bytes[pos] & 0x80 == 0 {
+            length = Int(bytes[pos])
+            pos += 1
+        } else {
+            let numLenBytes = Int(bytes[pos] & 0x7F)
+            pos += 1
+            var len = 0
+            for i in 0..<numLenBytes {
+                guard pos + i < bytes.count else { return nil }
+                len = (len << 8) | Int(bytes[pos + i])
+            }
+            pos += numLenBytes
+            length = len
+        }
+
+        guard pos + length <= bytes.count else { return nil }
+        let timeBytes = bytes[pos..<(pos + length)]
+        guard let timeStr = String(bytes: timeBytes, encoding: .ascii) else { return nil }
+
+        let df = DateFormatter()
+        df.timeZone = TimeZone(identifier: "UTC")
+        df.locale = Locale(identifier: "en_US_POSIX")
+
+        if tag == 0x17 { // UTCTime
+            df.dateFormat = "yyMMddHHmmss'Z'"
+            return df.date(from: timeStr)
+        } else if tag == 0x18 { // GeneralizedTime
+            df.dateFormat = "yyyyMMddHHmmss'Z'"
+            return df.date(from: timeStr)
+        }
+        return nil
+    }
+
+    /// Extract issuer common name from DER.
+    private static func extractIssuerName(from certData: Data) -> String? {
+        let bytes = [UInt8](certData)
+        guard bytes.count > 10 else { return nil }
+
+        var pos = skipTag(bytes: bytes, offset: 0) // outer SEQUENCE
+        pos = skipTag(bytes: bytes, offset: pos)    // TBS SEQUENCE
+
+        // Skip version [0] if present
+        if pos < bytes.count && bytes[pos] == 0xA0 {
+            pos = skipTLVFull(bytes: bytes, offset: pos)
+        }
+
+        // Skip serial number
+        pos = skipTLVFull(bytes: bytes, offset: pos)
+
+        // Skip signature algorithm
+        pos = skipTLVFull(bytes: bytes, offset: pos)
+
+        // Now at issuer Name (SEQUENCE of RDNs)
+        guard pos < bytes.count else { return nil }
+        let issuerStart = pos
+        let issuerEnd = skipTLVFull(bytes: bytes, offset: pos)
+        let issuerContentStart = skipTag(bytes: bytes, offset: issuerStart)
+
+        // Look for CN OID (2.5.4.3) = 55 04 03
+        let cnOid: [UInt8] = [0x55, 0x04, 0x03]
+        var searchPos = issuerContentStart
+        while searchPos < issuerEnd {
+            // Each RDN is a SET
+            guard searchPos < bytes.count, bytes[searchPos] == 0x31 else { break }
+            let setContentStart = skipTag(bytes: bytes, offset: searchPos)
+            let setEnd = skipTLVFull(bytes: bytes, offset: searchPos)
+
+            // Inside SET: SEQUENCE { OID, value }
+            let attrPos = setContentStart
+            guard attrPos < bytes.count, bytes[attrPos] == 0x30 else {
+                searchPos = setEnd
+                continue
+            }
+            let seqContentStart = skipTag(bytes: bytes, offset: attrPos)
+
+            // Read OID
+            guard seqContentStart < bytes.count, bytes[seqContentStart] == 0x06 else {
+                searchPos = setEnd
+                continue
+            }
+            let oidLength = Int(bytes[seqContentStart + 1])
+            let oidStart = seqContentStart + 2
+            guard oidStart + oidLength <= bytes.count else {
+                searchPos = setEnd
+                continue
+            }
+
+            let oid = Array(bytes[oidStart..<(oidStart + oidLength)])
+            if oid == cnOid {
+                // Read the value (UTF8String, PrintableString, etc.)
+                let valuePos = oidStart + oidLength
+                guard valuePos < bytes.count else {
+                    searchPos = setEnd
+                    continue
+                }
+                let valueContentStart = skipTag(bytes: bytes, offset: valuePos)
+                let valueEnd = skipTLVFull(bytes: bytes, offset: valuePos)
+                guard valueContentStart < valueEnd, valueEnd <= bytes.count else {
+                    searchPos = setEnd
+                    continue
+                }
+                return String(bytes: bytes[valueContentStart..<valueEnd], encoding: .utf8)
+            }
+
+            searchPos = setEnd
+        }
+
+        return nil
+    }
+
+    // MARK: - DER Helpers
+
+    private static func skipTag(bytes: [UInt8], offset: Int) -> Int {
+        guard offset < bytes.count else { return offset }
+        let pos = offset + 1
+        guard pos < bytes.count else { return pos }
+        if bytes[pos] & 0x80 == 0 {
+            return pos + 1
+        } else {
+            let numLenBytes = Int(bytes[pos] & 0x7F)
+            guard numLenBytes <= 4 else { return min(pos + 1, bytes.count) }
+            return min(pos + 1 + numLenBytes, bytes.count)
+        }
+    }
+
+    private static func skipTLVFull(bytes: [UInt8], offset: Int) -> Int {
+        guard offset < bytes.count else { return offset }
+        var pos = offset + 1
+        guard pos < bytes.count else { return pos }
+
+        var length = 0
+        if bytes[pos] & 0x80 == 0 {
+            length = Int(bytes[pos])
+            pos += 1
+        } else {
+            let numLenBytes = Int(bytes[pos] & 0x7F)
+            guard numLenBytes <= 4 else { return min(pos + 1, bytes.count) }
+            pos += 1
+            for i in 0..<numLenBytes {
+                guard pos + i < bytes.count else { return bytes.count }
+                length = (length << 8) | Int(bytes[pos + i])
+            }
+            pos += numLenBytes
+        }
+
+        return min(pos + length, bytes.count)
+    }
+
     // MARK: - Private: Build Self-Signed Certificate DER
 
-    /// Builds a minimal self-signed X.509 v3 certificate in DER format.
-    /// Supports both RSA and ECDSA keys.
     private static func buildSelfSignedCertificateDER(
         privateKey: SecKey,
         publicKey: SecKey,
@@ -440,14 +734,18 @@ public class CertificateManager: NSObject {
     ) throws -> Data {
         var der = Data()
 
-        // TBS Certificate
         var tbs = Data()
 
         // Version: v3 (2)
         tbs.append(contentsOf: DER.contextTag(0, value: DER.integer(Data([0x02]))))
 
-        // Serial Number
-        let serialBytes: [UInt8] = (0..<8).map { _ in UInt8.random(in: 0...255) }
+        // Serial Number (use SecRandomCopyBytes for crypto-safe randomness)
+        var serialBytes = [UInt8](repeating: 0, count: 8)
+        let randomStatus = SecRandomCopyBytes(kSecRandomDefault, serialBytes.count, &serialBytes)
+        if randomStatus != errSecSuccess {
+            // Fallback to SystemRandomNumberGenerator (still arc4random on Apple)
+            serialBytes = (0..<8).map { _ in UInt8.random(in: 0...255) }
+        }
         tbs.append(contentsOf: DER.integer(Data(serialBytes)))
 
         // Signature Algorithm
@@ -477,6 +775,26 @@ public class CertificateManager: NSObject {
             tbs.append(contentsOf: DER.subjectPublicKeyInfo(rsaPublicKey: pubKeyData))
         }
 
+        // X.509 v3 Extensions
+        var extensions = Data()
+
+        // Basic Constraints: CA=FALSE
+        let basicConstraintsOid: [UInt8] = [0x55, 0x1D, 0x13]
+        let bcValue = DER.sequence(Data()) // empty sequence = CA:FALSE
+        var bcAttr = DER.oid(basicConstraintsOid)
+        bcAttr.append(contentsOf: DER.octetString(bcValue))
+        extensions.append(contentsOf: DER.sequence(bcAttr))
+
+        // Key Usage: digitalSignature, nonRepudiation
+        let keyUsageOid: [UInt8] = [0x55, 0x1D, 0x0F]
+        let keyUsageBits = Data([0x03, 0x02, 0x06, 0xC0]) // BIT STRING: digitalSignature + nonRepudiation
+        var kuAttr = DER.oid(keyUsageOid)
+        kuAttr.append(contentsOf: DER.tag(0x01, content: Data([0xFF]))) // critical = TRUE
+        kuAttr.append(contentsOf: DER.octetString(keyUsageBits))
+        extensions.append(contentsOf: DER.sequence(kuAttr))
+
+        tbs.append(contentsOf: DER.contextTag(3, value: DER.sequence(extensions)))
+
         let tbsSequence = DER.sequence(tbs)
 
         // Sign the TBS certificate
@@ -496,7 +814,6 @@ public class CertificateManager: NSObject {
             ])
         }
 
-        // Build the full certificate
         der.append(contentsOf: tbsSequence)
         der.append(contentsOf: sigAlgoBytes)
         der.append(contentsOf: DER.bitString(signature))
@@ -518,7 +835,6 @@ private enum DER {
 
     static func integer(_ value: Data) -> Data {
         var intData = value
-        // Ensure positive integer (add leading zero if MSB is set)
         if let first = intData.first, first & 0x80 != 0 {
             intData.insert(0x00, at: 0)
         }
@@ -544,15 +860,33 @@ private enum DER {
     }
 
     static func printableString(_ string: String) -> Data {
-        return tag(0x13, content: Data(string.utf8))
+        // Validate PrintableString character set
+        let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 '()+,-./:=?")
+        let filtered = string.unicodeScalars.filter { allowed.contains($0) }
+        let sanitized = String(String.UnicodeScalarView(filtered))
+        return tag(0x13, content: Data(sanitized.utf8))
     }
 
-    static func utcTime(_ date: Date) -> Data {
+    /// Encode a date as UTCTime (< 2050) or GeneralizedTime (>= 2050).
+    static func time(_ date: Date) -> Data {
+        let calendar = Calendar(identifier: .gregorian)
+        let year = calendar.component(.year, from: date)
+
         let formatter = DateFormatter()
-        formatter.dateFormat = "yyMMddHHmmss'Z'"
         formatter.timeZone = TimeZone(identifier: "UTC")
-        let str = formatter.string(from: date)
-        return tag(0x17, content: Data(str.utf8))
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+
+        if year >= 2050 {
+            // GeneralizedTime (tag 0x18)
+            formatter.dateFormat = "yyyyMMddHHmmss'Z'"
+            let str = formatter.string(from: date)
+            return tag(0x18, content: Data(str.utf8))
+        } else {
+            // UTCTime (tag 0x17)
+            formatter.dateFormat = "yyMMddHHmmss'Z'"
+            let str = formatter.string(from: date)
+            return tag(0x17, content: Data(str.utf8))
+        }
     }
 
     static func contextTag(_ number: Int, value: Data) -> Data {
@@ -578,8 +912,10 @@ private enum DER {
             return [0x81, UInt8(length)]
         } else if length < 65536 {
             return [0x82, UInt8(length >> 8), UInt8(length & 0xFF)]
-        } else {
+        } else if length < 16_777_216 {
             return [0x83, UInt8(length >> 16), UInt8((length >> 8) & 0xFF), UInt8(length & 0xFF)]
+        } else {
+            return [0x84, UInt8(length >> 24), UInt8((length >> 16) & 0xFF), UInt8((length >> 8) & 0xFF), UInt8(length & 0xFF)]
         }
     }
 
@@ -602,7 +938,6 @@ private enum DER {
 
         // Country
         if !country.isEmpty {
-            // OID 2.5.4.6
             let countryOid: [UInt8] = [0x55, 0x04, 0x06]
             var atv = oid(countryOid)
             atv.append(contentsOf: printableString(country))
@@ -611,7 +946,6 @@ private enum DER {
 
         // Organization
         if !organization.isEmpty {
-            // OID 2.5.4.10
             let orgOid: [UInt8] = [0x55, 0x04, 0x0A]
             var atv = oid(orgOid)
             atv.append(contentsOf: utf8String(organization))
@@ -619,23 +953,23 @@ private enum DER {
         }
 
         // Common Name
-        // OID 2.5.4.3
-        let cnOid: [UInt8] = [0x55, 0x04, 0x03]
-        var atv = oid(cnOid)
-        atv.append(contentsOf: utf8String(commonName))
-        seq.append(contentsOf: set(sequence(atv)))
+        if !commonName.isEmpty {
+            let cnOid: [UInt8] = [0x55, 0x04, 0x03]
+            var atv = oid(cnOid)
+            atv.append(contentsOf: utf8String(commonName))
+            seq.append(contentsOf: set(sequence(atv)))
+        }
 
         return sequence(seq)
     }
 
     static func validity(notBefore: Date, notAfter: Date) -> Data {
-        var seq = utcTime(notBefore)
-        seq.append(contentsOf: utcTime(notAfter))
+        var seq = time(notBefore)
+        seq.append(contentsOf: time(notAfter))
         return sequence(seq)
     }
 
     static func subjectPublicKeyInfo(rsaPublicKey: Data) -> Data {
-        // rsaEncryption (1.2.840.113549.1.1.1)
         let rsaOidBytes: [UInt8] = [0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x01]
         var algo = oid(rsaOidBytes)
         algo.append(contentsOf: null())
@@ -647,9 +981,7 @@ private enum DER {
     }
 
     static func subjectPublicKeyInfoEC(ecPublicKey: Data) -> Data {
-        // id-ecPublicKey (1.2.840.10045.2.1)
         let ecOidBytes: [UInt8] = [0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01]
-        // prime256v1 / secp256r1 (1.2.840.10045.3.1.7)
         let curveOidBytes: [UInt8] = [0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07]
 
         var algo = oid(ecOidBytes)
@@ -659,12 +991,5 @@ private enum DER {
         var spki = algoSeq
         spki.append(contentsOf: bitString(ecPublicKey))
         return sequence(spki)
-    }
-}
-
-private extension Data {
-    func replacingOccurrences(of target: Data, with replacement: Data) -> Data {
-        // Not used in final implementation; return self
-        return self
     }
 }

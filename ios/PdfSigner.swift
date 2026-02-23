@@ -2,13 +2,48 @@ import Foundation
 import Security
 import CommonCrypto
 
+// MARK: - Error Types
+
+enum PdfSignerError: Error, LocalizedError {
+    case eofNotFound
+    case cannotParseTrailer
+    case cannotFindFirstPage
+    case cannotReadPageInfo
+    case cannotReadRootCatalog
+    case byteRangePlaceholderNotFound
+    case contentsPlaceholderNotFound
+    case signatureCreationFailed(String)
+    case cmsSignatureTooLarge(actual: Int, max: Int)
+    case emptyCertificateChain
+    case invalidByteRange
+    case invalidDER(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .eofNotFound: return "Invalid PDF: %%EOF not found"
+        case .cannotParseTrailer: return "Cannot parse PDF trailer"
+        case .cannotFindFirstPage: return "Cannot find first page"
+        case .cannotReadPageInfo: return "Cannot read page info"
+        case .cannotReadRootCatalog: return "Cannot read Root catalog"
+        case .byteRangePlaceholderNotFound: return "ByteRange placeholder not found in PDF"
+        case .contentsPlaceholderNotFound: return "Contents placeholder not found in PDF"
+        case .signatureCreationFailed(let msg): return "Failed to create signature: \(msg)"
+        case .cmsSignatureTooLarge(let actual, let max): return "CMS signature too large: \(actual) bytes (max \(max))"
+        case .emptyCertificateChain: return "Certificate chain is empty"
+        case .invalidByteRange: return "ByteRange values exceed PDF data bounds"
+        case .invalidDER(let msg): return "Invalid DER structure: \(msg)"
+        }
+    }
+}
+
+// MARK: - PAdES-B-B PDF Signer
+
 /// PAdES-B-B PDF signer.
 /// Implements proper PDF incremental update with AcroForm, SignatureField,
 /// Widget Annotation, cross-reference table, and CMS/PKCS#7 container.
-@objcMembers
-public class PdfSigner: NSObject {
+enum PdfSigner {
 
-    private static let contentsPlaceholderSize = 8192
+    static let contentsPlaceholderSize = 8192
 
     // MARK: - PDF Structure Parsing
 
@@ -24,6 +59,27 @@ public class PdfSigner: NSObject {
         let existingAnnotRefs: [String]?
     }
 
+    // MARK: - Cached Regex
+
+    private static let refRegex: NSRegularExpression = {
+        // swiftlint:disable:next force_try
+        try! NSRegularExpression(pattern: #"(\d+\s+\d+\s+R)"#)
+    }()
+
+    private static let fieldsRegex: NSRegularExpression = {
+        // swiftlint:disable:next force_try
+        try! NSRegularExpression(pattern: #"/Fields\s*\[([^\]]*)\]"#)
+    }()
+
+    private static let cachedDateFormatter: DateFormatter = {
+        let df = DateFormatter()
+        df.dateFormat = "'D:'yyyyMMddHHmmss'+00''00'''"
+        df.timeZone = TimeZone(identifier: "UTC")
+        return df
+    }()
+
+    // MARK: - Trailer Parsing
+
     /// Parse the PDF trailer to extract /Root, /Size, and previous startxref.
     private static func parseTrailer(in data: Data, eofPos: Int) -> TrailerInfo? {
         let endIdx = min(eofPos + 10, data.count)
@@ -33,9 +89,7 @@ public class PdfSigner: NSObject {
         guard let startxrefRange = text.range(of: "startxref", options: .backwards) else { return nil }
         let afterStartxref = text[startxrefRange.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
         let parts = afterStartxref.components(separatedBy: CharacterSet.whitespacesAndNewlines)
-        guard let prevStartXref = Int(parts[0]) else { return nil }
-
-        let startxrefPos = text.distance(from: text.startIndex, to: startxrefRange.lowerBound)
+        guard !parts.isEmpty, let prevStartXref = Int(parts[0]) else { return nil }
 
         // Try traditional trailer
         let textBeforeStartxref = String(text[..<startxrefRange.lowerBound])
@@ -71,6 +125,8 @@ public class PdfSigner: NSObject {
         return TrailerInfo(rootObjNum: rootObjNum, size: size, prevStartXref: prevStartXref)
     }
 
+    // MARK: - Object Dict Parsing
+
     /// Find the dictionary content of a PDF indirect object.
     /// Uses word-boundary check to avoid matching "12 0 obj" when searching for "2 0 obj".
     private static func findObjectDict(in data: Data, objNum: Int) -> String? {
@@ -78,16 +134,15 @@ public class PdfSigner: NSObject {
         let objHeader = "\(objNum) 0 obj"
 
         // Search for the LAST definition — critical for PDFs with incremental updates
-        // where the same object number is redefined in appended sections.
         var searchStart = text.startIndex
         var objRange: Range<String.Index>? = nil
         while let range = text.range(of: objHeader, range: searchStart..<text.endIndex) {
             if range.lowerBound == text.startIndex {
-                objRange = range  // keep going to find last occurrence
+                objRange = range
             } else {
                 let charBefore = text[text.index(before: range.lowerBound)]
                 if !charBefore.isNumber {
-                    objRange = range  // keep going to find last occurrence
+                    objRange = range
                 }
             }
             searchStart = range.upperBound
@@ -127,13 +182,9 @@ public class PdfSigner: NSObject {
     /// Resolve first page object number from Root -> Pages -> Kids[0].
     private static func findFirstPageObjNum(in data: Data, rootObjNum: Int) -> Int? {
         guard let rootDict = findObjectDict(in: data, objNum: rootObjNum) else { return nil }
-
         guard let pagesNum = extractFirstInt(from: rootDict, pattern: #"/Pages\s+(\d+)\s+\d+\s+R"#) else { return nil }
-
         guard let pagesDict = findObjectDict(in: data, objNum: pagesNum) else { return nil }
-
         guard let firstPageNum = extractFirstInt(from: pagesDict, pattern: #"/Kids\s*\[\s*(\d+)\s+\d+\s+R"#) else { return nil }
-
         return firstPageNum
     }
 
@@ -145,10 +196,9 @@ public class PdfSigner: NSObject {
 
         if let annotsMatch = dictContent.range(of: #"/Annots\s*\[([^\]]*)\]"#, options: .regularExpression) {
             let annotsStr = String(dictContent[annotsMatch])
-            let refPattern = try? NSRegularExpression(pattern: #"(\d+\s+\d+\s+R)"#)
             let nsAnnotsStr = annotsStr as NSString
-            let refs = refPattern?.matches(in: annotsStr, range: NSRange(location: 0, length: nsAnnotsStr.length))
-                .map { nsAnnotsStr.substring(with: $0.range) } ?? []
+            let refs = refRegex.matches(in: annotsStr, range: NSRange(location: 0, length: nsAnnotsStr.length))
+                .map { nsAnnotsStr.substring(with: $0.range) }
             if !refs.isEmpty {
                 existingAnnotRefs = refs
             }
@@ -161,12 +211,13 @@ public class PdfSigner: NSObject {
 
     private struct IncrementalUpdateResult {
         let data: Data
-        let contentsHexOffset: Int
-        let byteRangePlaceholderOffset: Int
-        let byteRangePlaceholderLength: Int
+        let contentsHexByteOffset: Int
+        let byteRangePlaceholderByteOffset: Int
+        let byteRangePlaceholderByteLength: Int
     }
 
     /// Build a complete PDF incremental update.
+    /// Uses UTF-8 byte counting for all offset calculations.
     private static func buildIncrementalUpdate(
         trailer: TrailerInfo,
         pageInfo: PageInfo,
@@ -174,71 +225,76 @@ public class PdfSigner: NSObject {
         reason: String,
         location: String,
         contactInfo: String,
-        appendOffset: Int
+        appendOffset: Int,
+        signatureFieldName: String = "Signature1"
     ) -> IncrementalUpdateResult {
         let sigObjNum = trailer.size
         let fieldObjNum = trailer.size + 1
         let newSize = trailer.size + 2
 
-        let dateFormatter = DateFormatter()
-        dateFormatter.dateFormat = "'D:'yyyyMMddHHmmss'+00''00'''"
-        dateFormatter.timeZone = TimeZone(identifier: "UTC")
-        let dateStr = dateFormatter.string(from: Date())
+        let dateStr = cachedDateFormatter.string(from: Date())
 
         let byteRangePlaceholder = "[0 0000000000 0000000000 0000000000]"
         let contentsPlaceholder = String(repeating: "0", count: contentsPlaceholderSize * 2)
 
         var xrefEntries: [(objNum: Int, offset: Int)] = []
 
-        var body = ""
-        body += "\n"
+        // Build body as Data directly to ensure byte-accurate offsets
+        var bodyData = Data()
+
+        func appendString(_ s: String) {
+            bodyData.append(contentsOf: s.utf8)
+        }
+
+        appendString("\n")
 
         // ── Object 1: Signature Value ──
-        let sigObjOffset = appendOffset + body.count
+        let sigObjOffset = appendOffset + bodyData.count
         xrefEntries.append((sigObjNum, sigObjOffset))
 
-        body += "\(sigObjNum) 0 obj\n"
-        body += "<<\n"
-        body += "/Type /Sig\n"
-        body += "/Filter /Adobe.PPKLite\n"
-        body += "/SubFilter /ETSI.CAdES.detached\n"
-        body += "/ByteRange \(byteRangePlaceholder)\n"
+        appendString("\(sigObjNum) 0 obj\n")
+        appendString("<<\n")
+        appendString("/Type /Sig\n")
+        appendString("/Filter /Adobe.PPKLite\n")
+        appendString("/SubFilter /ETSI.CAdES.detached\n")
+        appendString("/ByteRange ")
+        let byteRangePlaceholderByteOffset = bodyData.count
+        appendString("\(byteRangePlaceholder)\n")
 
         let contentsLinePrefix = "/Contents "
-        // Point to '<' so ByteRange gap includes <hex> delimiters (per PDF spec / Adobe requirement)
-        let contentsHexRelativeOffset = body.count + contentsLinePrefix.count
-        body += "\(contentsLinePrefix)<\(contentsPlaceholder)>\n"
+        appendString(contentsLinePrefix)
+        let contentsHexByteOffset = bodyData.count
+        appendString("<\(contentsPlaceholder)>\n")
 
-        body += "/Reason (\(escapeParentheses(reason)))\n"
-        body += "/Location (\(escapeParentheses(location)))\n"
-        body += "/ContactInfo (\(escapeParentheses(contactInfo)))\n"
-        body += "/M (\(dateStr))\n"
-        body += ">>\n"
-        body += "endobj\n\n"
+        appendString("/Reason (\(escapePdfString(reason)))\n")
+        appendString("/Location (\(escapePdfString(location)))\n")
+        appendString("/ContactInfo (\(escapePdfString(contactInfo)))\n")
+        appendString("/M (\(dateStr))\n")
+        appendString(">>\n")
+        appendString("endobj\n\n")
 
         // ── Object 2: Signature Field + Widget Annotation ──
-        let fieldObjOffset = appendOffset + body.count
+        let fieldObjOffset = appendOffset + bodyData.count
         xrefEntries.append((fieldObjNum, fieldObjOffset))
 
-        body += "\(fieldObjNum) 0 obj\n"
-        body += "<<\n"
-        body += "/Type /Annot\n"
-        body += "/Subtype /Widget\n"
-        body += "/FT /Sig\n"
-        body += "/T (Signature1)\n"
-        body += "/V \(sigObjNum) 0 R\n"
-        body += "/Rect [0 0 0 0]\n"
-        body += "/F 132\n"
-        body += "/P \(pageInfo.objNum) 0 R\n"
-        body += ">>\n"
-        body += "endobj\n\n"
+        appendString("\(fieldObjNum) 0 obj\n")
+        appendString("<<\n")
+        appendString("/Type /Annot\n")
+        appendString("/Subtype /Widget\n")
+        appendString("/FT /Sig\n")
+        appendString("/T (\(escapePdfString(signatureFieldName)))\n")
+        appendString("/V \(sigObjNum) 0 R\n")
+        appendString("/Rect [0 0 0 0]\n")
+        appendString("/F 132\n")
+        appendString("/P \(pageInfo.objNum) 0 R\n")
+        appendString(">>\n")
+        appendString("endobj\n\n")
 
         // ── Object 3: Updated Page ──
-        let updatedPageOffset = appendOffset + body.count
+        let updatedPageOffset = appendOffset + bodyData.count
         xrefEntries.append((pageInfo.objNum, updatedPageOffset))
 
         var pageDictClean = pageInfo.dictContent
-        // Remove existing /Annots
         if let annotsRange = pageDictClean.range(of: #"/Annots\s*\[[^\]]*\]"#, options: .regularExpression) {
             pageDictClean.removeSubrange(annotsRange)
         }
@@ -247,15 +303,15 @@ public class PdfSigner: NSObject {
         var annotRefs = pageInfo.existingAnnotRefs ?? []
         annotRefs.append("\(fieldObjNum) 0 R")
 
-        body += "\(pageInfo.objNum) 0 obj\n"
-        body += "<<\n"
-        body += "\(pageDictClean)\n"
-        body += "/Annots [\(annotRefs.joined(separator: " "))]\n"
-        body += ">>\n"
-        body += "endobj\n\n"
+        appendString("\(pageInfo.objNum) 0 obj\n")
+        appendString("<<\n")
+        appendString("\(pageDictClean)\n")
+        appendString("/Annots [\(annotRefs.joined(separator: " "))]\n")
+        appendString(">>\n")
+        appendString("endobj\n\n")
 
         // ── Object 4: Updated Catalog ──
-        let updatedCatalogOffset = appendOffset + body.count
+        let updatedCatalogOffset = appendOffset + bodyData.count
         xrefEntries.append((trailer.rootObjNum, updatedCatalogOffset))
 
         var catalogDictClean = rootDictContent
@@ -266,20 +322,17 @@ public class PdfSigner: NSObject {
             let afterAcroForm = String(catalogDictClean[acroFormRange.upperBound...]).trimmingCharacters(in: .whitespaces)
 
             if afterAcroForm.hasPrefix("<<") {
-                // Inline dict — find matching >>
-                let fieldsPattern = try? NSRegularExpression(pattern: #"/Fields\s*\[([^\]]*)\]"#)
                 let nsAfter = afterAcroForm as NSString
-                if let fieldsMatch = fieldsPattern?.firstMatch(in: afterAcroForm, range: NSRange(location: 0, length: nsAfter.length)) {
+                if let fieldsMatch = fieldsRegex.firstMatch(in: afterAcroForm, range: NSRange(location: 0, length: nsAfter.length)) {
                     let fieldsStr = nsAfter.substring(with: fieldsMatch.range(at: 1))
-                    let refPattern = try? NSRegularExpression(pattern: #"(\d+\s+\d+\s+R)"#)
                     let nsFieldsStr = fieldsStr as NSString
-                    existingFields = refPattern?.matches(in: fieldsStr, range: NSRange(location: 0, length: nsFieldsStr.length))
-                        .map { nsFieldsStr.substring(with: $0.range) } ?? []
+                    existingFields = refRegex.matches(in: fieldsStr, range: NSRange(location: 0, length: nsFieldsStr.length))
+                        .map { nsFieldsStr.substring(with: $0.range) }
                 }
 
                 // Remove the /AcroForm << ... >> from catalog
                 var depth = 0
-                var searchStr = String(catalogDictClean[acroFormRange.lowerBound...])
+                let searchStr = String(catalogDictClean[acroFormRange.lowerBound...])
                 let startPos = catalogDictClean.distance(from: catalogDictClean.startIndex, to: acroFormRange.lowerBound)
                 var j = searchStr.startIndex
                 while j < searchStr.endIndex {
@@ -303,7 +356,6 @@ public class PdfSigner: NSObject {
                     }
                 }
             } else if afterAcroForm.range(of: #"^\d+\s+\d+\s+R"#, options: .regularExpression) != nil {
-                // Indirect reference — remove /AcroForm N 0 R
                 if let fullMatch = catalogDictClean.range(of: #"/AcroForm\s+\d+\s+\d+\s+R"#, options: .regularExpression) {
                     catalogDictClean.removeSubrange(fullMatch)
                 }
@@ -314,52 +366,149 @@ public class PdfSigner: NSObject {
         var fieldRefs = existingFields
         fieldRefs.append("\(fieldObjNum) 0 R")
 
-        body += "\(trailer.rootObjNum) 0 obj\n"
-        body += "<<\n"
-        body += "\(catalogDictClean)\n"
-        body += "/AcroForm << /Fields [\(fieldRefs.joined(separator: " "))] /SigFlags 3 >>\n"
-        body += ">>\n"
-        body += "endobj\n\n"
+        appendString("\(trailer.rootObjNum) 0 obj\n")
+        appendString("<<\n")
+        appendString("\(catalogDictClean)\n")
+        appendString("/AcroForm << /Fields [\(fieldRefs.joined(separator: " "))] /SigFlags 3 >>\n")
+        appendString(">>\n")
+        appendString("endobj\n\n")
 
         // ── Cross-reference table ──
-        let xrefOffset = appendOffset + body.count
+        let xrefOffset = appendOffset + bodyData.count
 
         let sortedEntries = xrefEntries.sorted { $0.objNum < $1.objNum }
 
-        body += "xref\n"
-        var i = 0
-        while i < sortedEntries.count {
-            let startObjNum = sortedEntries[i].objNum
-            var endIdx = i
+        appendString("xref\n")
+        var idx = 0
+        while idx < sortedEntries.count {
+            let startObjNum = sortedEntries[idx].objNum
+            var endIdx = idx
             while endIdx + 1 < sortedEntries.count &&
                   sortedEntries[endIdx + 1].objNum == sortedEntries[endIdx].objNum + 1 {
                 endIdx += 1
             }
-            let count = endIdx - i + 1
-            body += "\(startObjNum) \(count)\n"
-            for k in i...endIdx {
-                body += String(format: "%010d 00000 n \n", sortedEntries[k].offset)
+            let count = endIdx - idx + 1
+            appendString("\(startObjNum) \(count)\n")
+            for k in idx...endIdx {
+                appendString(String(format: "%010d 00000 n \n", sortedEntries[k].offset))
             }
-            i = endIdx + 1
+            idx = endIdx + 1
         }
 
         // ── Trailer ──
-        body += "trailer\n"
-        body += "<< /Size \(newSize) /Root \(trailer.rootObjNum) 0 R /Prev \(trailer.prevStartXref) >>\n"
-        body += "startxref\n"
-        body += "\(xrefOffset)\n"
-        body += "%%EOF\n"
-
-        let bodyData = Data(body.utf8)
-
-        let brOffset = body.range(of: byteRangePlaceholder)
-            .map { body.distance(from: body.startIndex, to: $0.lowerBound) } ?? 0
+        appendString("trailer\n")
+        appendString("<< /Size \(newSize) /Root \(trailer.rootObjNum) 0 R /Prev \(trailer.prevStartXref) >>\n")
+        appendString("startxref\n")
+        appendString("\(xrefOffset)\n")
+        appendString("%%EOF\n")
 
         return IncrementalUpdateResult(
             data: bodyData,
-            contentsHexOffset: contentsHexRelativeOffset,
-            byteRangePlaceholderOffset: brOffset,
-            byteRangePlaceholderLength: byteRangePlaceholder.count
+            contentsHexByteOffset: contentsHexByteOffset,
+            byteRangePlaceholderByteOffset: byteRangePlaceholderByteOffset,
+            byteRangePlaceholderByteLength: byteRangePlaceholder.utf8.count
+        )
+    }
+
+    /// Generate a unique signature field name by checking existing fields.
+    private static func generateUniqueFieldName(in data: Data) -> String {
+        guard let text = String(data: data, encoding: .isoLatin1) else { return "Signature1" }
+        var index = 1
+        while text.contains("/T (Signature\(index))") {
+            index += 1
+        }
+        return "Signature\(index)"
+    }
+
+    // MARK: - Shared signing preparation
+
+    private struct SigningPreparation {
+        var fullPdf: Data
+        let byteRange: (Int, Int, Int, Int)
+        let hash: Data
+        let appendPoint: Int
+    }
+
+    /// Common preparation logic for both signPdf and prepareForExternalSigning.
+    private static func preparePdfForSigning(
+        pdfUrl: URL,
+        reason: String,
+        location: String,
+        contactInfo: String,
+        outputUrl: URL
+    ) throws -> SigningPreparation {
+        let pdfData = try Data(contentsOf: pdfUrl)
+
+        guard let eofRange = findEOF(in: pdfData) else {
+            throw PdfSignerError.eofNotFound
+        }
+
+        guard let trailer = parseTrailer(in: pdfData, eofPos: eofRange.lowerBound) else {
+            throw PdfSignerError.cannotParseTrailer
+        }
+
+        guard let firstPageNum = findFirstPageObjNum(in: pdfData, rootObjNum: trailer.rootObjNum) else {
+            throw PdfSignerError.cannotFindFirstPage
+        }
+
+        guard let pageInfo = readPageInfo(in: pdfData, pageObjNum: firstPageNum) else {
+            throw PdfSignerError.cannotReadPageInfo
+        }
+
+        guard let rootDictContent = findObjectDict(in: pdfData, objNum: trailer.rootObjNum) else {
+            throw PdfSignerError.cannotReadRootCatalog
+        }
+
+        // Find append point (after %%EOF + newline)
+        var appendPoint = eofRange.upperBound
+        pdfData.withUnsafeBytes { ptr in
+            guard let base = ptr.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
+            while appendPoint < pdfData.count &&
+                  (base[appendPoint] == 0x0A || base[appendPoint] == 0x0D) {
+                appendPoint += 1
+            }
+        }
+
+        let fieldName = generateUniqueFieldName(in: pdfData)
+
+        let update = buildIncrementalUpdate(
+            trailer: trailer,
+            pageInfo: pageInfo,
+            rootDictContent: rootDictContent,
+            reason: reason,
+            location: location,
+            contactInfo: contactInfo,
+            appendOffset: appendPoint,
+            signatureFieldName: fieldName
+        )
+
+        // Combine original PDF + incremental update
+        var fullPdf = Data(pdfData[0..<appendPoint])
+        fullPdf.append(update.data)
+
+        // Calculate ByteRange
+        let contentsGapStart = appendPoint + update.contentsHexByteOffset
+        let contentsGapEnd = contentsGapStart + 1 + contentsPlaceholderSize * 2 + 1  // < + hex + >
+        let byteRange = (0, contentsGapStart, contentsGapEnd, fullPdf.count - contentsGapEnd)
+
+        // Replace ByteRange placeholder (throw on failure instead of silently continuing)
+        let byteRangeString = "[\(byteRange.0) \(byteRange.1) \(byteRange.2) \(byteRange.3)]"
+        let paddedByteRange = byteRangeString.padding(toLength: update.byteRangePlaceholderByteLength, withPad: " ", startingAt: 0)
+
+        let byteRangePlaceholder = "[0 0000000000 0000000000 0000000000]"
+        guard let brRange = findMarker(byteRangePlaceholder, in: fullPdf, near: appendPoint) else {
+            throw PdfSignerError.byteRangePlaceholderNotFound
+        }
+        fullPdf.replaceSubrange(brRange, with: Data(paddedByteRange.utf8))
+
+        // Hash the byte ranges
+        let hash = try computeByteRangeHash(pdfData: fullPdf, byteRange: byteRange)
+
+        return SigningPreparation(
+            fullPdf: fullPdf,
+            byteRange: byteRange,
+            hash: hash,
+            appendPoint: appendPoint
         )
     }
 
@@ -373,101 +522,33 @@ public class PdfSigner: NSObject {
         contactInfo: String,
         outputUrl: URL
     ) throws {
-        let pdfData = try Data(contentsOf: pdfUrl)
-
-        // Step 1: Parse existing PDF structure
-        guard let eofRange = findEOF(in: pdfData) else {
-            throw NSError(domain: "Neurosign", code: 100, userInfo: [
-                NSLocalizedDescriptionKey: "Invalid PDF: %%EOF not found"
-            ])
-        }
-
-        guard let trailer = parseTrailer(in: pdfData, eofPos: eofRange.lowerBound) else {
-            throw NSError(domain: "Neurosign", code: 100, userInfo: [
-                NSLocalizedDescriptionKey: "Cannot parse PDF trailer"
-            ])
-        }
-
-        guard let firstPageNum = findFirstPageObjNum(in: pdfData, rootObjNum: trailer.rootObjNum) else {
-            throw NSError(domain: "Neurosign", code: 100, userInfo: [
-                NSLocalizedDescriptionKey: "Cannot find first page"
-            ])
-        }
-
-        guard let pageInfo = readPageInfo(in: pdfData, pageObjNum: firstPageNum) else {
-            throw NSError(domain: "Neurosign", code: 100, userInfo: [
-                NSLocalizedDescriptionKey: "Cannot read page info"
-            ])
-        }
-
-        guard let rootDictContent = findObjectDict(in: pdfData, objNum: trailer.rootObjNum) else {
-            throw NSError(domain: "Neurosign", code: 100, userInfo: [
-                NSLocalizedDescriptionKey: "Cannot read Root catalog"
-            ])
-        }
-
-        // Step 2: Find append point (after %%EOF + newline)
-        var appendPoint = eofRange.upperBound
-        let pdfBytes = [UInt8](pdfData)
-        while appendPoint < pdfBytes.count &&
-              (pdfBytes[appendPoint] == 0x0A || pdfBytes[appendPoint] == 0x0D) {
-            appendPoint += 1
-        }
-
-        // Step 3: Build incremental update
-        let update = buildIncrementalUpdate(
-            trailer: trailer,
-            pageInfo: pageInfo,
-            rootDictContent: rootDictContent,
+        var prep = try preparePdfForSigning(
+            pdfUrl: pdfUrl,
             reason: reason,
             location: location,
             contactInfo: contactInfo,
-            appendOffset: appendPoint
+            outputUrl: outputUrl
         )
 
-        // Step 4: Combine original PDF + incremental update
-        var fullPdf = Data(pdfData[0..<appendPoint])
-        fullPdf.append(update.data)
-
-        // Step 5: Calculate ByteRange
-        // Gap covers <hex_digits> including angle brackets (per PDF spec)
-        let contentsGapStart = appendPoint + update.contentsHexOffset
-        let contentsGapEnd = contentsGapStart + 1 + contentsPlaceholderSize * 2 + 1  // < + hex + >
-        let byteRange = (0, contentsGapStart, contentsGapEnd, fullPdf.count - contentsGapEnd)
-
-        // Step 6: Replace ByteRange placeholder
-        let byteRangeString = "[\(byteRange.0) \(byteRange.1) \(byteRange.2) \(byteRange.3)]"
-        let paddedByteRange = byteRangeString.padding(toLength: update.byteRangePlaceholderLength, withPad: " ", startingAt: 0)
-
-        let byteRangePlaceholder = "[0 0000000000 0000000000 0000000000]"
-        if let brRange = findMarker(byteRangePlaceholder, in: fullPdf, near: appendPoint) {
-            let replacement = Data(paddedByteRange.utf8)
-            fullPdf.replaceSubrange(brRange, with: replacement)
-        }
-
-        // Step 7: Hash the byte ranges
-        let hash = computeByteRangeHash(pdfData: fullPdf, byteRange: byteRange)
-
-        // Step 8: Build CMS container
+        // Build CMS container
         let cmsContainer = try buildCMSContainer(
-            hash: hash,
+            hash: prep.hash,
             privateKey: identity.privateKey,
             certificate: identity.certificateData,
             certificateChain: identity.certificateChain
         )
 
-        // Step 9: Embed CMS into /Contents
+        // Embed CMS into /Contents
         let hexEncoded = cmsContainer.map { String(format: "%02x", $0) }.joined()
         let paddedHex = hexEncoded.padding(toLength: contentsPlaceholderSize * 2, withPad: "0", startingAt: 0)
 
         let contentsPlaceholder = String(repeating: "0", count: contentsPlaceholderSize * 2)
-        if let contentsRange = findMarker(contentsPlaceholder, in: fullPdf, near: appendPoint) {
-            let replacement = Data(paddedHex.utf8)
-            fullPdf.replaceSubrange(contentsRange, with: replacement)
+        guard let contentsRange = findMarker(contentsPlaceholder, in: prep.fullPdf, near: prep.appendPoint) else {
+            throw PdfSignerError.contentsPlaceholderNotFound
         }
+        prep.fullPdf.replaceSubrange(contentsRange, with: Data(paddedHex.utf8))
 
-        // Step 10: Write signed PDF
-        try fullPdf.write(to: outputUrl)
+        try prep.fullPdf.write(to: outputUrl)
     }
 
     // MARK: - External Signing
@@ -481,71 +562,16 @@ public class PdfSigner: NSObject {
         contactInfo: String,
         outputUrl: URL
     ) throws -> (hash: Data, hashAlgorithm: String) {
-        let pdfData = try Data(contentsOf: pdfUrl)
-
-        guard let eofRange = findEOF(in: pdfData) else {
-            throw NSError(domain: "Neurosign", code: 100, userInfo: [
-                NSLocalizedDescriptionKey: "Invalid PDF: %%EOF not found"
-            ])
-        }
-        guard let trailer = parseTrailer(in: pdfData, eofPos: eofRange.lowerBound) else {
-            throw NSError(domain: "Neurosign", code: 100, userInfo: [
-                NSLocalizedDescriptionKey: "Cannot parse PDF trailer"
-            ])
-        }
-        guard let firstPageNum = findFirstPageObjNum(in: pdfData, rootObjNum: trailer.rootObjNum) else {
-            throw NSError(domain: "Neurosign", code: 100, userInfo: [
-                NSLocalizedDescriptionKey: "Cannot find first page"
-            ])
-        }
-        guard let pageInfo = readPageInfo(in: pdfData, pageObjNum: firstPageNum) else {
-            throw NSError(domain: "Neurosign", code: 100, userInfo: [
-                NSLocalizedDescriptionKey: "Cannot read page info"
-            ])
-        }
-        guard let rootDictContent = findObjectDict(in: pdfData, objNum: trailer.rootObjNum) else {
-            throw NSError(domain: "Neurosign", code: 100, userInfo: [
-                NSLocalizedDescriptionKey: "Cannot read Root catalog"
-            ])
-        }
-
-        var appendPoint = eofRange.upperBound
-        let pdfBytes = [UInt8](pdfData)
-        while appendPoint < pdfBytes.count &&
-              (pdfBytes[appendPoint] == 0x0A || pdfBytes[appendPoint] == 0x0D) {
-            appendPoint += 1
-        }
-
-        let update = buildIncrementalUpdate(
-            trailer: trailer,
-            pageInfo: pageInfo,
-            rootDictContent: rootDictContent,
+        let prep = try preparePdfForSigning(
+            pdfUrl: pdfUrl,
             reason: reason,
             location: location,
             contactInfo: contactInfo,
-            appendOffset: appendPoint
+            outputUrl: outputUrl
         )
 
-        var fullPdf = Data(pdfData[0..<appendPoint])
-        fullPdf.append(update.data)
-
-        let contentsGapStart = appendPoint + update.contentsHexOffset
-        let contentsGapEnd = contentsGapStart + 1 + contentsPlaceholderSize * 2 + 1
-        let byteRange = (0, contentsGapStart, contentsGapEnd, fullPdf.count - contentsGapEnd)
-
-        let byteRangeString = "[\(byteRange.0) \(byteRange.1) \(byteRange.2) \(byteRange.3)]"
-        let paddedByteRange = byteRangeString.padding(toLength: update.byteRangePlaceholderLength, withPad: " ", startingAt: 0)
-
-        let byteRangePlaceholder = "[0 0000000000 0000000000 0000000000]"
-        if let brRange = findMarker(byteRangePlaceholder, in: fullPdf, near: appendPoint) {
-            fullPdf.replaceSubrange(brRange, with: Data(paddedByteRange.utf8))
-        }
-
-        let hash = computeByteRangeHash(pdfData: fullPdf, byteRange: byteRange)
-
-        try fullPdf.write(to: outputUrl)
-
-        return (hash: hash, hashAlgorithm: "SHA-256")
+        try prep.fullPdf.write(to: outputUrl)
+        return (hash: prep.hash, hashAlgorithm: "SHA-256")
     }
 
     /// Complete external signing by embedding a CMS/PKCS#7 signature into
@@ -560,17 +586,17 @@ public class PdfSigner: NSObject {
         let hexEncoded = cmsSignature.map { String(format: "%02x", $0) }.joined()
 
         guard hexEncoded.count <= contentsPlaceholderSize * 2 else {
-            throw NSError(domain: "Neurosign", code: 102, userInfo: [
-                NSLocalizedDescriptionKey: "CMS signature too large: \(cmsSignature.count) bytes (max \(contentsPlaceholderSize))"
-            ])
+            throw PdfSignerError.cmsSignatureTooLarge(actual: cmsSignature.count, max: contentsPlaceholderSize)
         }
 
         let paddedHex = hexEncoded.padding(toLength: contentsPlaceholderSize * 2, withPad: "0", startingAt: 0)
         let placeholder = String(repeating: "0", count: contentsPlaceholderSize * 2)
 
-        if let contentsRange = findMarker(placeholder, in: fullPdf, near: 0) {
-            fullPdf.replaceSubrange(contentsRange, with: Data(paddedHex.utf8))
+        // Search from beginning with wider range for completeExternalSigning
+        guard let contentsRange = findMarkerWide(placeholder, in: fullPdf) else {
+            throw PdfSignerError.contentsPlaceholderNotFound
         }
+        fullPdf.replaceSubrange(contentsRange, with: Data(paddedHex.utf8))
 
         try fullPdf.write(to: outputUrl)
     }
@@ -599,27 +625,109 @@ public class PdfSigner: NSObject {
                 return nil
             }
 
-            let hash = computeByteRangeHash(pdfData: pdfData, byteRange: byteRange)
-            let hasValidStructure = cmsData.count > 100
+            // Verify the CMS structure has minimum valid components
+            guard cmsData.count > 100 else {
+                return SignatureInfo(
+                    signerName: sigInfo.name ?? "Unknown",
+                    signedAt: sigInfo.date ?? "",
+                    valid: false,
+                    trusted: false,
+                    reason: sigInfo.reason ?? ""
+                )
+            }
+
+            // Compute the hash from the byte ranges and verify against CMS
+            let hashValid: Bool
+            if let hash = try? computeByteRangeHash(pdfData: pdfData, byteRange: byteRange) {
+                hashValid = verifyCMSDigest(cmsData: cmsData, expectedHash: hash)
+            } else {
+                hashValid = false
+            }
 
             return SignatureInfo(
                 signerName: sigInfo.name ?? "Unknown",
                 signedAt: sigInfo.date ?? "",
-                valid: hasValidStructure,
+                valid: hashValid,
                 trusted: false,
                 reason: sigInfo.reason ?? ""
             )
         }
     }
 
-    // MARK: - Private: Key Type Detection
+    /// Verify that the messageDigest attribute in the CMS matches the expected hash.
+    private static func verifyCMSDigest(cmsData: Data, expectedHash: Data) -> Bool {
+        let bytes = [UInt8](cmsData)
+        // Search for the messageDigest OID (1.2.840.113549.1.9.4)
+        let messageDigestOid: [UInt8] = [0x06, 0x09, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x09, 0x04]
+
+        // Find the OID in the CMS data
+        guard let oidOffset = findSequence(messageDigestOid, in: bytes) else {
+            return false
+        }
+
+        // After the OID, we expect a SET containing an OCTET STRING with the hash
+        var pos = oidOffset + messageDigestOid.count
+        guard pos < bytes.count else { return false }
+
+        // Skip SET tag and length
+        guard bytes[pos] == 0x31 else { return false }
+        pos += 1
+        guard pos < bytes.count else { return false }
+        pos = skipLengthBytes(bytes: bytes, offset: pos)
+
+        // Read OCTET STRING
+        guard pos < bytes.count, bytes[pos] == 0x04 else { return false }
+        pos += 1
+        guard pos < bytes.count else { return false }
+
+        let hashLength: Int
+        if bytes[pos] & 0x80 == 0 {
+            hashLength = Int(bytes[pos])
+            pos += 1
+        } else {
+            let numLenBytes = Int(bytes[pos] & 0x7F)
+            pos += 1
+            var len = 0
+            for i in 0..<numLenBytes {
+                guard pos + i < bytes.count else { return false }
+                len = (len << 8) | Int(bytes[pos + i])
+            }
+            pos += numLenBytes
+            hashLength = len
+        }
+
+        guard pos + hashLength <= bytes.count else { return false }
+        let digestData = Data(bytes[pos..<(pos + hashLength)])
+        return digestData == expectedHash
+    }
+
+    private static func findSequence(_ needle: [UInt8], in haystack: [UInt8]) -> Int? {
+        guard needle.count <= haystack.count else { return nil }
+        for i in 0...(haystack.count - needle.count) {
+            if Array(haystack[i..<(i + needle.count)]) == needle {
+                return i
+            }
+        }
+        return nil
+    }
+
+    private static func skipLengthBytes(bytes: [UInt8], offset: Int) -> Int {
+        guard offset < bytes.count else { return offset }
+        if bytes[offset] & 0x80 == 0 {
+            return offset + 1
+        } else {
+            let numLenBytes = Int(bytes[offset] & 0x7F)
+            return offset + 1 + numLenBytes
+        }
+    }
+
+    // MARK: - Key Type Detection
 
     private enum KeyAlgorithm {
         case rsa
         case ecSha256
         case ecSha512
 
-        /// SecKey signing algorithm
         var secKeyAlgorithm: SecKeyAlgorithm {
             switch self {
             case .rsa:       return .rsaSignatureMessagePKCS1v15SHA256
@@ -628,19 +736,14 @@ public class PdfSigner: NSObject {
             }
         }
 
-        /// OID bytes for the signature algorithm in CMS
         var signatureAlgorithmOid: [UInt8] {
             switch self {
-            // 1.2.840.113549.1.1.11 (sha256WithRSAEncryption)
             case .rsa:       return [0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0B]
-            // 1.2.840.10045.4.3.2 (ecdsa-with-SHA256)
             case .ecSha256:  return [0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x04, 0x03, 0x02]
-            // 1.2.840.10045.4.3.4 (ecdsa-with-SHA512)
             case .ecSha512:  return [0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x04, 0x03, 0x04]
             }
         }
 
-        /// Whether signature algorithm includes NULL parameter (RSA does, ECDSA does not)
         var signatureAlgorithmHasNull: Bool {
             switch self {
             case .rsa: return true
@@ -652,17 +755,16 @@ public class PdfSigner: NSObject {
     private static func detectKeyAlgorithm(_ privateKey: SecKey) -> KeyAlgorithm {
         guard let attributes = SecKeyCopyAttributes(privateKey) as? [String: Any],
               let keyType = attributes[kSecAttrKeyType as String] as? String else {
-            return .rsa // default fallback
+            return .rsa
         }
         if keyType == (kSecAttrKeyTypeECSECPrimeRandom as String) || keyType == (kSecAttrKeyTypeEC as String) {
-            // Detect EC key size to choose SHA-256 vs SHA-512
             let keySize = (attributes[kSecAttrKeySizeInBits as String] as? Int) ?? 256
             return keySize > 384 ? .ecSha512 : .ecSha256
         }
         return .rsa
     }
 
-    // MARK: - Private: Build CMS/PKCS#7 Container
+    // MARK: - Build CMS/PKCS#7 Container
 
     private static func buildCMSContainer(
         hash: Data,
@@ -670,9 +772,10 @@ public class PdfSigner: NSObject {
         certificate: Data,
         certificateChain: [SecCertificate]
     ) throws -> Data {
-        var signError: Unmanaged<CFError>?
+        guard !certificateChain.isEmpty else {
+            throw PdfSignerError.emptyCertificateChain
+        }
 
-        // Detect key algorithm (RSA vs ECDSA)
         let keyAlgo = detectKeyAlgorithm(privateKey)
 
         // Compute SHA-256 hash of the signing certificate for ESSCertIDv2
@@ -685,48 +788,47 @@ public class PdfSigner: NSObject {
             }
         }
 
-        let signedAttrs = buildSignedAttributes(hash: hash, certHash: certHash, certData: certDER)
-        let signedAttrsForSigning = buildSignedAttributesForSigning(hash: hash, certHash: certHash, certData: certDER)
+        let signedAttrsContent = buildSignedAttributesContent(hash: hash, certHash: certHash, certData: certDER)
+        let signedAttrs = CMSBuilder.contextTag(0, value: signedAttrsContent)
+        let signedAttrsForSigning = CMSBuilder.set(signedAttrsContent)
 
-        guard let signature = SecKeyCreateSignature(
+        var signError: Unmanaged<CFError>?
+        let signatureResult = SecKeyCreateSignature(
             privateKey,
             keyAlgo.secKeyAlgorithm,
             signedAttrsForSigning as CFData,
             &signError
-        ) as? Data else {
-            throw signError?.takeRetainedValue() ?? NSError(domain: "Neurosign", code: 101, userInfo: [
-                NSLocalizedDescriptionKey: "Failed to create signature"
-            ])
+        )
+
+        guard let signature = signatureResult as? Data else {
+            let error = signError?.takeRetainedValue()
+            throw PdfSignerError.signatureCreationFailed(
+                error?.localizedDescription ?? "Unknown error"
+            )
         }
 
         var signedData = Data()
 
-        // version: 1
         signedData.append(contentsOf: CMSBuilder.integer(Data([0x01])))
 
-        // digestAlgorithms: SET OF { sha256 }
         let sha256Oid: [UInt8] = [0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01]
         var digestAlgoSeq = CMSBuilder.oid(sha256Oid)
         digestAlgoSeq.append(contentsOf: CMSBuilder.null())
         let digestAlgos = CMSBuilder.set(CMSBuilder.sequence(digestAlgoSeq))
         signedData.append(contentsOf: digestAlgos)
 
-        // encapContentInfo
         let dataOid: [UInt8] = [0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x07, 0x01]
         let encapContent = CMSBuilder.sequence(CMSBuilder.oid(dataOid))
         signedData.append(contentsOf: encapContent)
 
-        // certificates
         var certsData = Data()
         for cert in certificateChain {
-            let certDER = SecCertificateCopyData(cert) as Data
-            certsData.append(certDER)
+            let cd = SecCertificateCopyData(cert) as Data
+            certsData.append(cd)
         }
         signedData.append(contentsOf: CMSBuilder.contextTag(0, value: certsData))
 
-        // signerInfos
         var signerInfo = Data()
-
         signerInfo.append(contentsOf: CMSBuilder.integer(Data([0x01])))
 
         let issuerAndSerial = buildIssuerAndSerialNumber(from: certificate)
@@ -738,7 +840,6 @@ public class PdfSigner: NSObject {
 
         signerInfo.append(contentsOf: signedAttrs)
 
-        // Signature algorithm (RSA includes NULL param, ECDSA does not)
         var sigAlgo = CMSBuilder.oid(keyAlgo.signatureAlgorithmOid)
         if keyAlgo.signatureAlgorithmHasNull {
             sigAlgo.append(contentsOf: CMSBuilder.null())
@@ -759,28 +860,40 @@ public class PdfSigner: NSObject {
         return CMSBuilder.sequence(contentInfo)
     }
 
-    // MARK: - Private: Signed Attributes
+    // MARK: - Signed Attributes (deduplicated)
 
-    /// Build ESSCertIDv2 signing-certificate-v2 attribute data.
-    /// Includes IssuerSerial for full PAdES B-B compliance.
+    /// Build the raw signed attributes content (without wrapper).
+    /// Used by both contextTag(0) wrapping (for CMS) and SET wrapping (for signing).
+    private static func buildSignedAttributesContent(hash: Data, certHash: Data, certData: Data) -> Data {
+        var attrs = Data()
+
+        let contentTypeOid: [UInt8] = [0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x09, 0x03]
+        let dataOid: [UInt8] = [0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x07, 0x01]
+        var contentTypeAttr = CMSBuilder.oid(contentTypeOid)
+        contentTypeAttr.append(contentsOf: CMSBuilder.set(CMSBuilder.oid(dataOid)))
+        attrs.append(contentsOf: CMSBuilder.sequence(contentTypeAttr))
+
+        let messageDigestOid: [UInt8] = [0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x09, 0x04]
+        var digestAttr = CMSBuilder.oid(messageDigestOid)
+        digestAttr.append(contentsOf: CMSBuilder.set(CMSBuilder.octetString(hash)))
+        attrs.append(contentsOf: CMSBuilder.sequence(digestAttr))
+
+        attrs.append(contentsOf: buildSigningCertV2Attr(certHash: certHash, certData: certData))
+
+        return attrs
+    }
+
+    // MARK: - ESSCertIDv2
+
     private static func buildSigningCertV2Attr(certHash: Data, certData: Data) -> Data {
-        // id-aa-signingCertificateV2: 1.2.840.113549.1.9.16.2.47
         let sigCertV2Oid: [UInt8] = [0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x09, 0x10, 0x02, 0x2F]
 
-        // Extract issuer and serial from certificate DER for IssuerSerial
         let issuerSerial = buildIssuerSerialFromCert(certData)
 
-        // ESSCertIDv2 ::= SEQUENCE {
-        //   hashAlgorithm  AlgorithmIdentifier DEFAULT sha256,
-        //   certHash       OCTET STRING,
-        //   issuerSerial   IssuerSerial OPTIONAL
-        // }
-        // SHA-256 is DEFAULT, so we omit AlgorithmIdentifier
         var essCertIdV2Content = CMSBuilder.octetString(certHash)
         essCertIdV2Content.append(contentsOf: issuerSerial)
         let essCertIdV2 = CMSBuilder.sequence(essCertIdV2Content)
 
-        // SigningCertificateV2 ::= SEQUENCE { certs SEQUENCE OF ESSCertIDv2 }
         let signingCertV2 = CMSBuilder.sequence(CMSBuilder.sequence(essCertIdV2))
 
         var attr = CMSBuilder.oid(sigCertV2Oid)
@@ -788,18 +901,39 @@ public class PdfSigner: NSObject {
         return CMSBuilder.sequence(attr)
     }
 
-    /// Build IssuerSerial from certificate DER.
-    /// IssuerSerial ::= SEQUENCE { issuer GeneralNames, serialNumber CertificateSerialNumber }
-    /// GeneralNames ::= SEQUENCE OF GeneralName
-    /// GeneralName ::= CHOICE { directoryName [4] Name }
+    // MARK: - Issuer and Serial Number (deduplicated)
+
+    /// Navigate DER to extract issuer and serial, used for IssuerSerial with GeneralName wrapping.
     private static func buildIssuerSerialFromCert(_ certData: Data) -> Data {
+        let (issuerData, serialData) = extractIssuerAndSerial(from: certData)
+
+        let generalName = CMSBuilder.contextTag(4, value: issuerData)
+        let generalNames = CMSBuilder.sequence(generalName)
+
+        var issuerSerialContent = generalNames
+        issuerSerialContent.append(contentsOf: serialData)
+        return CMSBuilder.sequence(issuerSerialContent)
+    }
+
+    /// Navigate DER to extract issuer and serial, used for IssuerAndSerialNumber in SignerInfo.
+    private static func buildIssuerAndSerialNumber(from certData: Data) -> Data {
+        let (issuerData, serialData) = extractIssuerAndSerial(from: certData)
+
+        var isn = issuerData
+        isn.append(serialData)
+        return CMSBuilder.sequence(isn)
+    }
+
+    /// Common DER navigation to extract issuer and serial number from a certificate.
+    private static func extractIssuerAndSerial(from certData: Data) -> (issuer: Data, serial: Data) {
         let bytes = [UInt8](certData)
 
-        // Navigate to TBSCertificate
-        var pos = 0
-        pos = skipTag(bytes: bytes, offset: 0) // outer SEQUENCE header
+        guard bytes.count > 10 else {
+            return (Data(), Data())
+        }
 
-        let tbsContentStart = skipTag(bytes: bytes, offset: pos) // TBS SEQUENCE header
+        var pos = skipTagSafe(bytes: bytes, offset: 0) // outer SEQUENCE header
+        let tbsContentStart = skipTagSafe(bytes: bytes, offset: pos) // TBS SEQUENCE header
         pos = tbsContentStart
 
         // Skip version [0] if present
@@ -809,146 +943,107 @@ public class PdfSigner: NSObject {
 
         // Read serialNumber
         let serialStart = pos
-        let serialEnd = skipTLVFull(bytes: bytes, offset: pos)
-        let serialData = Data(bytes[serialStart..<min(serialEnd, bytes.count)])
+        let serialEnd = min(skipTLVFull(bytes: bytes, offset: pos), bytes.count)
+        let serialData = Data(bytes[serialStart..<serialEnd])
         pos = serialEnd
 
         // Skip signature AlgorithmIdentifier
-        pos = skipTLVFull(bytes: bytes, offset: pos)
+        pos = min(skipTLVFull(bytes: bytes, offset: pos), bytes.count)
 
         // Read issuer Name
         let issuerStart = pos
-        let issuerEnd = skipTLVFull(bytes: bytes, offset: pos)
-        let issuerData = Data(bytes[issuerStart..<min(issuerEnd, bytes.count)])
+        let issuerEnd = min(skipTLVFull(bytes: bytes, offset: pos), bytes.count)
+        let issuerData = Data(bytes[issuerStart..<issuerEnd])
 
-        // Build GeneralName: directoryName [4] EXPLICIT
-        let generalName = CMSBuilder.contextTag(4, value: issuerData)
-        // Build GeneralNames: SEQUENCE OF GeneralName
-        let generalNames = CMSBuilder.sequence(generalName)
-
-        // Build IssuerSerial: SEQUENCE { issuer GeneralNames, serialNumber INTEGER }
-        var issuerSerialContent = generalNames
-        issuerSerialContent.append(contentsOf: serialData)
-        return CMSBuilder.sequence(issuerSerialContent)
+        return (issuerData, serialData)
     }
 
-    private static func buildSignedAttributes(hash: Data, certHash: Data, certData: Data) -> Data {
-        var attrs = Data()
+    // MARK: - PDF Helpers
 
-        // contentType
-        let contentTypeOid: [UInt8] = [0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x09, 0x03]
-        let dataOid: [UInt8] = [0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x07, 0x01]
-        var contentTypeAttr = CMSBuilder.oid(contentTypeOid)
-        contentTypeAttr.append(contentsOf: CMSBuilder.set(CMSBuilder.oid(dataOid)))
-        attrs.append(contentsOf: CMSBuilder.sequence(contentTypeAttr))
-
-        // messageDigest
-        let messageDigestOid: [UInt8] = [0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x09, 0x04]
-        var digestAttr = CMSBuilder.oid(messageDigestOid)
-        digestAttr.append(contentsOf: CMSBuilder.set(CMSBuilder.octetString(hash)))
-        attrs.append(contentsOf: CMSBuilder.sequence(digestAttr))
-
-        // signing-certificate-v2 (ESSCertIDv2) — mandatory for PAdES B-B
-        attrs.append(contentsOf: buildSigningCertV2Attr(certHash: certHash, certData: certData))
-
-        return CMSBuilder.contextTag(0, value: attrs)
-    }
-
-    private static func buildSignedAttributesForSigning(hash: Data, certHash: Data, certData: Data) -> Data {
-        var attrs = Data()
-
-        // contentType
-        let contentTypeOid: [UInt8] = [0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x09, 0x03]
-        let dataOid: [UInt8] = [0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x07, 0x01]
-        var contentTypeAttr = CMSBuilder.oid(contentTypeOid)
-        contentTypeAttr.append(contentsOf: CMSBuilder.set(CMSBuilder.oid(dataOid)))
-        attrs.append(contentsOf: CMSBuilder.sequence(contentTypeAttr))
-
-        // messageDigest
-        let messageDigestOid: [UInt8] = [0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x09, 0x04]
-        var digestAttr = CMSBuilder.oid(messageDigestOid)
-        digestAttr.append(contentsOf: CMSBuilder.set(CMSBuilder.octetString(hash)))
-        attrs.append(contentsOf: CMSBuilder.sequence(digestAttr))
-
-        // signing-certificate-v2 (ESSCertIDv2) — mandatory for PAdES B-B
-        attrs.append(contentsOf: buildSigningCertV2Attr(certHash: certHash, certData: certData))
-
-        return CMSBuilder.set(attrs)
-    }
-
-    // MARK: - Private: Issuer and Serial Number
-
-    private static func buildIssuerAndSerialNumber(from certData: Data) -> Data {
-        let bytes = [UInt8](certData)
-        var offset = 0
-
-        guard bytes.count > 10 else {
-            return CMSBuilder.sequence(Data())
-        }
-
-        offset = skipTLV(bytes: bytes, offset: 0)
-        if offset < 0 { offset = 4 }
-
-        let tbsStart = offset
-        let tbsContentStart = skipTag(bytes: bytes, offset: tbsStart)
-
-        var pos = tbsContentStart
-        if pos < bytes.count && bytes[pos] == 0xA0 {
-            pos = skipTLVFull(bytes: bytes, offset: pos)
-        }
-
-        let serialStart = pos
-        let serialEnd = skipTLVFull(bytes: bytes, offset: pos)
-        let serialData = Data(bytes[serialStart..<min(serialEnd, bytes.count)])
-        pos = serialEnd
-
-        pos = skipTLVFull(bytes: bytes, offset: pos)
-
-        let issuerStart = pos
-        let issuerEnd = skipTLVFull(bytes: bytes, offset: pos)
-        let issuerData = Data(bytes[issuerStart..<min(issuerEnd, bytes.count)])
-
-        var isn = issuerData
-        isn.append(serialData)
-        return CMSBuilder.sequence(isn)
-    }
-
-    // MARK: - Private: PDF Helpers
-
+    /// Find %%EOF marker, searching only the last 1024 bytes per PDF spec.
     private static func findEOF(in data: Data) -> Range<Int>? {
-        let eofMarker = Data("%%EOF".utf8)
-        let bytes = [UInt8](data)
-        for i in stride(from: bytes.count - eofMarker.count, through: 0, by: -1) {
-            if Data(bytes[i..<(i + eofMarker.count)]) == eofMarker {
-                return i..<(i + eofMarker.count)
+        let eofMarker = [UInt8]("%%EOF".utf8)
+        let searchStart = max(0, data.count - 1024)
+
+        return data.withUnsafeBytes { ptr -> Range<Int>? in
+            guard let base = ptr.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return nil }
+            for i in stride(from: data.count - eofMarker.count, through: searchStart, by: -1) {
+                var match = true
+                for j in 0..<eofMarker.count {
+                    if base[i + j] != eofMarker[j] {
+                        match = false
+                        break
+                    }
+                }
+                if match {
+                    return i..<(i + eofMarker.count)
+                }
             }
+            return nil
         }
-        return nil
     }
 
     /// Find a string marker in PDF data near a given offset.
     private static func findMarker(_ marker: String, in data: Data, near offset: Int) -> Range<Int>? {
-        let markerData = Data(marker.utf8)
+        let markerBytes = [UInt8](marker.utf8)
         let searchStart = max(0, offset - 100)
-        let searchEnd = min(data.count - markerData.count, offset + contentsPlaceholderSize * 3)
-        let bytes = [UInt8](data)
+        let searchEnd = min(data.count - markerBytes.count, offset + contentsPlaceholderSize * 3)
+        guard searchStart < searchEnd else { return nil }
 
-        for i in searchStart..<searchEnd {
-            if i + markerData.count <= bytes.count && Data(bytes[i..<(i + markerData.count)]) == markerData {
-                return i..<(i + markerData.count)
+        return data.withUnsafeBytes { ptr -> Range<Int>? in
+            guard let base = ptr.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return nil }
+            for i in searchStart..<searchEnd {
+                var match = true
+                for j in 0..<markerBytes.count {
+                    if base[i + j] != markerBytes[j] {
+                        match = false
+                        break
+                    }
+                }
+                if match {
+                    return i..<(i + markerBytes.count)
+                }
             }
+            return nil
         }
-        return nil
     }
 
-    private static func escapeParentheses(_ string: String) -> String {
+    /// Find a marker across the entire PDF (used for completeExternalSigning).
+    private static func findMarkerWide(_ marker: String, in data: Data) -> Range<Int>? {
+        let markerBytes = [UInt8](marker.utf8)
+        guard data.count >= markerBytes.count else { return nil }
+
+        return data.withUnsafeBytes { ptr -> Range<Int>? in
+            guard let base = ptr.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return nil }
+            for i in 0...(data.count - markerBytes.count) {
+                var match = true
+                for j in 0..<markerBytes.count {
+                    if base[i + j] != markerBytes[j] {
+                        match = false
+                        break
+                    }
+                }
+                if match {
+                    return i..<(i + markerBytes.count)
+                }
+            }
+            return nil
+        }
+    }
+
+    /// Escape special characters in PDF string literals.
+    /// Handles backslash, parentheses, newline, carriage return, and tab.
+    private static func escapePdfString(_ string: String) -> String {
         return string
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "(", with: "\\(")
             .replacingOccurrences(of: ")", with: "\\)")
+            .replacingOccurrences(of: "\n", with: "\\n")
+            .replacingOccurrences(of: "\r", with: "\\r")
+            .replacingOccurrences(of: "\t", with: "\\t")
     }
 
-    // MARK: - Private: Int Extraction Helpers
+    // MARK: - Int Extraction Helpers
 
     private static func extractFirstInt(from text: String, after prefix: String) -> Int? {
         guard let prefixRange = text.range(of: prefix) else { return nil }
@@ -967,30 +1062,41 @@ public class PdfSigner: NSObject {
         return Int(text[range])
     }
 
-    // MARK: - Private: Hash
+    // MARK: - Hash
 
     private static func computeByteRangeHash(
         pdfData: Data,
         byteRange: (Int, Int, Int, Int)
-    ) -> Data {
+    ) throws -> Data {
+        let range1Start = byteRange.0
+        let range1Length = byteRange.1
+        let range2Start = byteRange.2
+        let range2Length = byteRange.3
+
+        // Validate bounds
+        guard range1Start >= 0,
+              range1Length >= 0,
+              range2Start >= 0,
+              range2Length >= 0,
+              range1Start + range1Length <= pdfData.count,
+              range2Start + range2Length <= pdfData.count else {
+            throw PdfSignerError.invalidByteRange
+        }
+
         var hasher = CC_SHA256_CTX()
         CC_SHA256_Init(&hasher)
 
-        let range1Start = byteRange.0
-        let range1Length = byteRange.1
         if range1Length > 0 {
             pdfData.withUnsafeBytes { ptr in
-                let base = ptr.baseAddress!.advanced(by: range1Start)
-                CC_SHA256_Update(&hasher, base, CC_LONG(range1Length))
+                guard let base = ptr.baseAddress else { return }
+                CC_SHA256_Update(&hasher, base.advanced(by: range1Start), CC_LONG(range1Length))
             }
         }
 
-        let range2Start = byteRange.2
-        let range2Length = byteRange.3
         if range2Length > 0 {
             pdfData.withUnsafeBytes { ptr in
-                let base = ptr.baseAddress!.advanced(by: range2Start)
-                CC_SHA256_Update(&hasher, base, CC_LONG(range2Length))
+                guard let base = ptr.baseAddress else { return }
+                CC_SHA256_Update(&hasher, base.advanced(by: range2Start), CC_LONG(range2Length))
             }
         }
 
@@ -1002,7 +1108,7 @@ public class PdfSigner: NSObject {
         return digest
     }
 
-    // MARK: - Private: Signature Verification Parsing
+    // MARK: - Signature Verification Parsing
 
     private struct ParsedSignature {
         let contents: String?
@@ -1059,11 +1165,32 @@ public class PdfSigner: NSObject {
         return String(text[afterStart..<endRange.lowerBound])
     }
 
+    /// Parse a PDF string field, handling escaped and balanced parentheses.
     private static func parseField(named field: String, from text: String) -> String? {
         guard let range = text.range(of: "/\(field) (") else { return nil }
         let afterStart = range.upperBound
-        guard let endRange = text[afterStart...].range(of: ")") else { return nil }
-        return String(text[afterStart..<endRange.lowerBound])
+        var depth = 1
+        var pos = afterStart
+        while pos < text.endIndex && depth > 0 {
+            let ch = text[pos]
+            if ch == "\\" {
+                // Skip escaped character
+                let next = text.index(after: pos)
+                if next < text.endIndex {
+                    pos = text.index(after: next)
+                    continue
+                }
+            } else if ch == "(" {
+                depth += 1
+            } else if ch == ")" {
+                depth -= 1
+                if depth == 0 {
+                    return String(text[afterStart..<pos])
+                }
+            }
+            pos = text.index(after: pos)
+        }
+        return nil
     }
 
     private static func hexToData(_ hex: String) -> Data? {
@@ -1072,6 +1199,7 @@ public class PdfSigner: NSObject {
         guard cleaned.count % 2 == 0 else { return nil }
 
         var data = Data()
+        data.reserveCapacity(cleaned.count / 2)
         var index = cleaned.startIndex
         while index < cleaned.endIndex {
             let nextIndex = cleaned.index(index, offsetBy: 2)
@@ -1083,29 +1211,28 @@ public class PdfSigner: NSObject {
         return data
     }
 
-    // MARK: - DER Parsing Helpers
+    // MARK: - DER Parsing Helpers (with bounds checking)
 
-    private static func skipTag(bytes: [UInt8], offset: Int) -> Int {
+    /// Skip tag + length bytes, returning the offset of the content start.
+    private static func skipTagSafe(bytes: [UInt8], offset: Int) -> Int {
         guard offset < bytes.count else { return offset }
-        var pos = offset + 1
-        if pos >= bytes.count { return pos }
+        var pos = offset + 1 // skip tag byte
+        guard pos < bytes.count else { return pos }
 
         if bytes[pos] & 0x80 == 0 {
             return pos + 1
         } else {
             let numLenBytes = Int(bytes[pos] & 0x7F)
-            return pos + 1 + numLenBytes
+            guard numLenBytes <= 4 else { return min(pos + 1, bytes.count) }
+            return min(pos + 1 + numLenBytes, bytes.count)
         }
     }
 
-    private static func skipTLV(bytes: [UInt8], offset: Int) -> Int {
-        return skipTag(bytes: bytes, offset: offset)
-    }
-
+    /// Skip an entire TLV (tag + length + value), returning the offset after the value.
     private static func skipTLVFull(bytes: [UInt8], offset: Int) -> Int {
         guard offset < bytes.count else { return offset }
-        var pos = offset + 1
-        if pos >= bytes.count { return pos }
+        var pos = offset + 1 // skip tag byte
+        guard pos < bytes.count else { return pos }
 
         var length = 0
         if bytes[pos] & 0x80 == 0 {
@@ -1113,22 +1240,24 @@ public class PdfSigner: NSObject {
             pos += 1
         } else {
             let numLenBytes = Int(bytes[pos] & 0x7F)
+            guard numLenBytes <= 4 else { return min(pos + 1, bytes.count) }
             pos += 1
             for i in 0..<numLenBytes {
-                if pos + i < bytes.count {
-                    length = (length << 8) | Int(bytes[pos + i])
-                }
+                guard pos + i < bytes.count else { return bytes.count }
+                length = (length << 8) | Int(bytes[pos + i])
             }
             pos += numLenBytes
         }
 
-        return pos + length
+        // Guard against maliciously large length values
+        let result = pos + length
+        return min(result, bytes.count)
     }
 }
 
 // MARK: - CMS DER Builder
 
-private enum CMSBuilder {
+enum CMSBuilder {
     static func sequence(_ content: Data) -> Data { tag(0x30, content: content) }
     static func set(_ content: Data) -> Data { tag(0x31, content: content) }
     static func integer(_ value: Data) -> Data {
@@ -1156,6 +1285,7 @@ private enum CMSBuilder {
         if length < 128 { return [UInt8(length)] }
         else if length < 256 { return [0x81, UInt8(length)] }
         else if length < 65536 { return [0x82, UInt8(length >> 8), UInt8(length & 0xFF)] }
-        else { return [0x83, UInt8(length >> 16), UInt8((length >> 8) & 0xFF), UInt8(length & 0xFF)] }
+        else if length < 16_777_216 { return [0x83, UInt8(length >> 16), UInt8((length >> 8) & 0xFF), UInt8(length & 0xFF)] }
+        else { return [0x84, UInt8(length >> 24), UInt8((length >> 16) & 0xFF), UInt8((length >> 8) & 0xFF), UInt8(length & 0xFF)] }
     }
 }

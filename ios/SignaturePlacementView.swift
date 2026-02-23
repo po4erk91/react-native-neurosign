@@ -28,12 +28,12 @@ public class SignaturePlacementView: UIView, UIGestureRecognizerDelegate {
     private let bottomRightCornerLayer = CAShapeLayer()
 
     // Configurable border/corner values (in pt)
-    private var _borderColorUI: UIColor = UIColor(red: 233/255, green: 69/255, blue: 96/255, alpha: 1)
-    private var _borderWidthPt: CGFloat = 2
-    private var _borderPaddingPt: CGFloat = 0
-    private var _cornerSizePt: CGFloat = 14
-    private var _cornerWidthPt: CGFloat = 3
-    private var _borderRadiusPt: CGFloat = 0
+    private var borderColorUI: UIColor = UIColor(red: 233/255, green: 69/255, blue: 96/255, alpha: 1)
+    private var borderWidthPt: CGFloat = 2
+    private var borderPaddingPt: CGFloat = 0
+    private var cornerSizePt: CGFloat = 14
+    private var cornerWidthPt: CGFloat = 3
+    private var borderRadiusPt: CGFloat = 0
 
     // PDF state
     private var pdfDocument: CGPDFDocument?
@@ -52,8 +52,8 @@ public class SignaturePlacementView: UIView, UIGestureRecognizerDelegate {
     private var pdfDisplayRect: CGRect = .zero
 
     // Default position (normalized 0-1, -1 = center)
-    private var _defaultPositionX: CGFloat = -1
-    private var _defaultPositionY: CGFloat = -1
+    private var defaultPosX: CGFloat = -1
+    private var defaultPosY: CGFloat = -1
 
     // Drag state
     private var dragStartPoint: CGPoint = .zero
@@ -116,7 +116,6 @@ public class SignaturePlacementView: UIView, UIGestureRecognizerDelegate {
         _ gestureRecognizer: UIGestureRecognizer,
         shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer
     ) -> Bool {
-        // If our gesture is pinch or pan, don't let RN's touch handler require us to fail
         return false
     }
 
@@ -131,8 +130,8 @@ public class SignaturePlacementView: UIView, UIGestureRecognizerDelegate {
         var current: UIView? = self
         while let view = current {
             for recognizer in view.gestureRecognizers ?? [] {
-                let name = String(describing: type(of: recognizer))
-                if name.contains("RCTTouchHandler") || name.contains("RCTRootContentView") {
+                let typeName = String(describing: type(of: recognizer))
+                if typeName.contains("RCTTouchHandler") || typeName.contains("RCTRootContentView") {
                     for myGR in gestureRecognizers ?? [] {
                         recognizer.require(toFail: myGR)
                     }
@@ -169,11 +168,11 @@ public class SignaturePlacementView: UIView, UIGestureRecognizerDelegate {
     }
 
     public var defaultPositionX: CGFloat = -1 {
-        didSet { _defaultPositionX = defaultPositionX }
+        didSet { defaultPosX = defaultPositionX }
     }
 
     public var defaultPositionY: CGFloat = -1 {
-        didSet { _defaultPositionY = defaultPositionY }
+        didSet { defaultPosY = defaultPositionY }
     }
 
     public var placeholderBackgroundColor: NSString? {
@@ -186,7 +185,7 @@ public class SignaturePlacementView: UIView, UIGestureRecognizerDelegate {
     public var sigBorderColor: NSString? {
         didSet {
             guard let hex = sigBorderColor as String? else { return }
-            _borderColorUI = UIColor(hexString: hex) ?? _borderColorUI
+            borderColorUI = UIColor(hexString: hex) ?? borderColorUI
             configureLayers()
             updateOverlayLayers()
         }
@@ -194,7 +193,7 @@ public class SignaturePlacementView: UIView, UIGestureRecognizerDelegate {
 
     public var sigBorderWidth: CGFloat = 2 {
         didSet {
-            _borderWidthPt = sigBorderWidth
+            borderWidthPt = sigBorderWidth
             configureLayers()
             updateOverlayLayers()
         }
@@ -202,21 +201,21 @@ public class SignaturePlacementView: UIView, UIGestureRecognizerDelegate {
 
     public var sigBorderPadding: CGFloat = 0 {
         didSet {
-            _borderPaddingPt = sigBorderPadding
+            borderPaddingPt = sigBorderPadding
             updateOverlayLayers()
         }
     }
 
     public var sigCornerSize: CGFloat = 14 {
         didSet {
-            _cornerSizePt = sigCornerSize
+            cornerSizePt = sigCornerSize
             updateOverlayLayers()
         }
     }
 
     public var sigCornerWidth: CGFloat = 3 {
         didSet {
-            _cornerWidthPt = sigCornerWidth
+            cornerWidthPt = sigCornerWidth
             configureLayers()
             updateOverlayLayers()
         }
@@ -224,27 +223,27 @@ public class SignaturePlacementView: UIView, UIGestureRecognizerDelegate {
 
     public var sigBorderRadius: CGFloat = 0 {
         didSet {
-            _borderRadiusPt = sigBorderRadius
+            borderRadiusPt = sigBorderRadius
             updateOverlayLayers()
         }
     }
 
     private func configureLayers() {
-        let cgColor = _borderColorUI.cgColor
+        let cgColor = borderColorUI.cgColor
 
         dashedBorderLayer.strokeColor = cgColor
         dashedBorderLayer.fillColor = nil
-        dashedBorderLayer.lineWidth = _borderWidthPt
+        dashedBorderLayer.lineWidth = borderWidthPt
         dashedBorderLayer.lineDashPattern = [8, 6]
 
         topLeftCornerLayer.strokeColor = cgColor
         topLeftCornerLayer.fillColor = nil
-        topLeftCornerLayer.lineWidth = _cornerWidthPt
+        topLeftCornerLayer.lineWidth = cornerWidthPt
         topLeftCornerLayer.lineCap = .round
 
         bottomRightCornerLayer.strokeColor = cgColor
         bottomRightCornerLayer.fillColor = nil
-        bottomRightCornerLayer.lineWidth = _cornerWidthPt
+        bottomRightCornerLayer.lineWidth = cornerWidthPt
         bottomRightCornerLayer.lineCap = .round
     }
 
@@ -314,9 +313,7 @@ public class SignaturePlacementView: UIView, UIGestureRecognizerDelegate {
         case .changed:
             let maxWidth = pdfDisplayRect.width * 0.9
             let newWidth = max(60, min(maxWidth, pinchStartWidth * gesture.scale))
-            let newHeight = newWidth / sigAspectRatio
-
-            // Keep center stable
+            let newHeight = sigAspectRatio > 0 ? newWidth / sigAspectRatio : newWidth
             let newX = pinchStartCenter.x - newWidth / 2
             let newY = pinchStartCenter.y - newHeight / 2
 
@@ -355,7 +352,7 @@ public class SignaturePlacementView: UIView, UIGestureRecognizerDelegate {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
 
-        let p = _borderPaddingPt
+        let p = borderPaddingPt
         let rect = CGRect(
             x: sigX - p, y: sigY - p,
             width: sigWidth + p * 2, height: sigHeight + p * 2
@@ -363,15 +360,15 @@ public class SignaturePlacementView: UIView, UIGestureRecognizerDelegate {
 
         // Dashed border (with optional rounded corners)
         let borderPath: UIBezierPath
-        if _borderRadiusPt > 0 {
-            borderPath = UIBezierPath(roundedRect: rect, cornerRadius: _borderRadiusPt)
+        if borderRadiusPt > 0 {
+            borderPath = UIBezierPath(roundedRect: rect, cornerRadius: borderRadiusPt)
         } else {
             borderPath = UIBezierPath(rect: rect)
         }
         dashedBorderLayer.path = borderPath.cgPath
 
         // Top-left corner
-        let cl = _cornerSizePt
+        let cl = cornerSizePt
         let tlPath = UIBezierPath()
         tlPath.move(to: CGPoint(x: rect.minX, y: rect.minY + cl))
         tlPath.addLine(to: CGPoint(x: rect.minX, y: rect.minY))
@@ -405,17 +402,10 @@ public class SignaturePlacementView: UIView, UIGestureRecognizerDelegate {
     // MARK: - PDF Loading
 
     private func loadPdf(_ urlString: String) {
-        var fileUrl: URL?
-        if urlString.hasPrefix("file://") {
-            fileUrl = URL(string: urlString)
-        } else if urlString.hasPrefix("/") {
-            fileUrl = URL(fileURLWithPath: urlString)
-        } else {
-            fileUrl = URL(string: urlString)
-        }
+        let fileUrl = Self.resolveFileUrl(urlString)
 
-        guard let url = fileUrl else { return }
-        guard let document = CGPDFDocument(url as CFURL) else { return }
+        guard let url = fileUrl,
+              let document = CGPDFDocument(url as CFURL) else { return }
 
         pdfDocument = document
         totalPageCount = document.numberOfPages
@@ -441,6 +431,8 @@ public class SignaturePlacementView: UIView, UIGestureRecognizerDelegate {
         let pageWidth = pageRect.width
         let pageHeight = pageRect.height
 
+        guard pageWidth > 0, pageHeight > 0 else { return }
+
         let viewW = bounds.width
         let viewH = bounds.height
         let pdfAspect = pageWidth / pageHeight
@@ -465,7 +457,7 @@ public class SignaturePlacementView: UIView, UIGestureRecognizerDelegate {
 
         pdfDisplayRect = CGRect(x: displayX, y: displayY, width: displayW, height: displayH)
 
-        let scale = UIScreen.main.scale
+        let scale = traitCollection.displayScale > 0 ? traitCollection.displayScale : 2.0
         let renderSize = CGSize(width: displayW * scale, height: displayH * scale)
         let renderer = UIGraphicsImageRenderer(size: renderSize)
         let image = renderer.image { ctx in
@@ -500,11 +492,11 @@ public class SignaturePlacementView: UIView, UIGestureRecognizerDelegate {
         guard pdfDisplayRect.width > 0 else { return }
 
         sigWidth = pdfDisplayRect.width * 0.25
-        sigHeight = sigWidth / sigAspectRatio
+        sigHeight = sigAspectRatio > 0 ? sigWidth / sigAspectRatio : sigWidth
 
-        if _defaultPositionX >= 0, _defaultPositionY >= 0 {
-            sigX = pdfDisplayRect.origin.x + _defaultPositionX * pdfDisplayRect.width
-            sigY = pdfDisplayRect.origin.y + _defaultPositionY * pdfDisplayRect.height
+        if defaultPosX >= 0, defaultPosY >= 0 {
+            sigX = pdfDisplayRect.origin.x + defaultPosX * pdfDisplayRect.width
+            sigY = pdfDisplayRect.origin.y + defaultPosY * pdfDisplayRect.height
         } else {
             sigX = pdfDisplayRect.origin.x + (pdfDisplayRect.width - sigWidth) / 2
             sigY = pdfDisplayRect.origin.y + (pdfDisplayRect.height - sigHeight) / 2
@@ -517,18 +509,13 @@ public class SignaturePlacementView: UIView, UIGestureRecognizerDelegate {
     // MARK: - Signature image loading
 
     private func loadSignatureImage(_ urlString: String) {
-        var fileUrl: URL?
-        if urlString.hasPrefix("file://") {
-            fileUrl = URL(string: urlString)
-        } else if urlString.hasPrefix("/") {
-            fileUrl = URL(fileURLWithPath: urlString)
-        } else {
-            fileUrl = URL(string: urlString)
-        }
+        let fileUrl = Self.resolveFileUrl(urlString)
 
         guard let url = fileUrl,
               let data = try? Data(contentsOf: url),
               let image = UIImage(data: data) else { return }
+
+        guard image.size.width > 0, image.size.height > 0 else { return }
 
         sigAspectRatio = image.size.width / image.size.height
         signatureImageView.image = image
@@ -536,6 +523,18 @@ public class SignaturePlacementView: UIView, UIGestureRecognizerDelegate {
         if pdfDisplayRect.width > 0 {
             sigHeight = sigWidth / sigAspectRatio
             updateSignatureLayout()
+        }
+    }
+
+    // MARK: - URL Resolution
+
+    private static func resolveFileUrl(_ urlString: String) -> URL? {
+        if urlString.hasPrefix("file://") {
+            return URL(string: urlString)
+        } else if urlString.hasPrefix("/") {
+            return URL(fileURLWithPath: urlString)
+        } else {
+            return URL(string: urlString)
         }
     }
 }
