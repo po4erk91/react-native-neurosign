@@ -566,7 +566,7 @@ export default function App() {
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>Select Certificate</Text>
-            <ScrollView style={{ maxHeight: 300 }}>
+            <ScrollView style={styles.certPickerList}>
               {certificates.map((cert, index) => (
                 <TouchableOpacity
                   key={index}
@@ -582,7 +582,7 @@ export default function App() {
               ))}
             </ScrollView>
             <TouchableOpacity
-              style={[styles.buttonSecondary, { marginTop: 12 }]}
+              style={[styles.buttonSecondary, styles.mt12]}
               onPress={() => handleCertSelected(null)}
             >
               <Text style={styles.buttonSecondaryText}>
@@ -590,7 +590,7 @@ export default function App() {
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={{ marginTop: 12, alignItems: 'center', padding: 8 }}
+              style={styles.modalCancelButton}
               onPress={() => setShowCertPicker(false)}
             >
               <Text style={styles.modalCancel}>Cancel</Text>
@@ -629,7 +629,7 @@ export default function App() {
             />
             <View style={styles.modalActions}>
               <TouchableOpacity
-                style={{ padding: 8 }}
+                style={styles.modalActionBtn}
                 onPress={() => {
                   setShowImportModal(false);
                   setImportPassword('');
@@ -639,7 +639,7 @@ export default function App() {
                 <Text style={styles.modalCancel}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={{ padding: 8 }}
+                style={styles.modalActionBtn}
                 onPress={handleImportConfirm}
               >
                 <Text style={styles.modalConfirm}>Import</Text>
@@ -863,7 +863,7 @@ export default function App() {
               <Text style={styles.backButton}>Back</Text>
             </TouchableOpacity>
             <Text style={styles.headerTitle}>PDF Generated</Text>
-            <View style={{ width: 50 }} />
+            <View style={styles.headerSpacer} />
           </View>
 
           <ScrollView contentContainerStyle={styles.scrollContent}>
@@ -1020,18 +1020,13 @@ export default function App() {
                   setScreen('sign');
                 }}
               >
-                <Text style={[styles.backButton, { color: '#e94560' }]}>
+                <Text style={[styles.backButton, styles.placementCancel]}>
                   Cancel
                 </Text>
               </TouchableOpacity>
               <Text style={styles.headerTitle}>Place Signature</Text>
               <TouchableOpacity onPress={() => placementRef.current?.confirm()}>
-                <Text
-                  style={[
-                    styles.backButton,
-                    { color: '#e94560', fontWeight: '700' },
-                  ]}
-                >
+                <Text style={[styles.backButton, styles.placementAction]}>
                   {collectedPlacements.has(placementPageIndex)
                     ? 'Update'
                     : 'Add'}
@@ -1048,51 +1043,25 @@ export default function App() {
               backgroundColor="#0f3460"
               onPlacementConfirmed={handlePlacementAdd}
               onPageCount={(count) => setPlacementPageCount(count)}
-              style={{
-                flex: 1,
-                margin: 12,
-                borderRadius: 8,
-                overflow: 'hidden',
-              }}
+              style={styles.placementView}
             />
 
             {/* Page navigation */}
             {placementPageCount > 1 && (
-              <View
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  paddingVertical: 10,
-                  gap: 20,
-                }}
-              >
+              <View style={styles.pageNavRow}>
                 <TouchableOpacity
                   onPress={() =>
                     setPlacementPageIndex((p) => Math.max(0, p - 1))
                   }
                   disabled={placementPageIndex === 0}
-                  style={{
-                    width: 36,
-                    height: 36,
-                    borderRadius: 18,
-                    backgroundColor: '#16213e',
-                    justifyContent: 'center',
-                    alignItems: 'center',
-                    opacity: placementPageIndex === 0 ? 0.3 : 1,
-                  }}
+                  style={[
+                    styles.pageNavBtn,
+                    placementPageIndex === 0 && styles.pageNavBtnDisabled,
+                  ]}
                 >
-                  <Text
-                    style={{
-                      color: '#ffffff',
-                      fontSize: 18,
-                      fontWeight: '700',
-                    }}
-                  >
-                    {'<'}
-                  </Text>
+                  <Text style={styles.pageNavBtnText}>{'<'}</Text>
                 </TouchableOpacity>
-                <Text style={{ color: '#aaa', fontSize: 14 }}>
+                <Text style={styles.pageNavLabel}>
                   Page {placementPageIndex + 1} of {placementPageCount}
                   {collectedPlacements.has(placementPageIndex) ? ' \u2713' : ''}
                 </Text>
@@ -1103,26 +1072,13 @@ export default function App() {
                     )
                   }
                   disabled={placementPageIndex === placementPageCount - 1}
-                  style={{
-                    width: 36,
-                    height: 36,
-                    borderRadius: 18,
-                    backgroundColor: '#16213e',
-                    justifyContent: 'center',
-                    alignItems: 'center',
-                    opacity:
-                      placementPageIndex === placementPageCount - 1 ? 0.3 : 1,
-                  }}
+                  style={[
+                    styles.pageNavBtn,
+                    placementPageIndex === placementPageCount - 1 &&
+                      styles.pageNavBtnDisabled,
+                  ]}
                 >
-                  <Text
-                    style={{
-                      color: '#ffffff',
-                      fontSize: 18,
-                      fontWeight: '700',
-                    }}
-                  >
-                    {'>'}
-                  </Text>
+                  <Text style={styles.pageNavBtnText}>{'>'}</Text>
                 </TouchableOpacity>
               </View>
             )}
@@ -1131,30 +1087,19 @@ export default function App() {
             <TouchableOpacity
               onPress={handleApplyAllPlacements}
               disabled={collectedPlacements.size === 0}
-              style={{
-                backgroundColor:
-                  collectedPlacements.size > 0 ? '#e94560' : '#333',
-                marginHorizontal: 24,
-                paddingVertical: 14,
-                borderRadius: 10,
-                alignItems: 'center',
-              }}
+              style={[
+                styles.applyBtn,
+                collectedPlacements.size === 0 && styles.applyBtnDisabled,
+              ]}
             >
-              <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>
+              <Text style={styles.applyBtnText}>
                 {collectedPlacements.size > 0
                   ? `Apply to ${collectedPlacements.size} page(s)`
                   : 'Tap "Add" to place signature'}
               </Text>
             </TouchableOpacity>
 
-            <Text
-              style={{
-                color: '#666',
-                fontSize: 12,
-                textAlign: 'center',
-                paddingVertical: 10,
-              }}
-            >
+            <Text style={styles.placementHint}>
               {placementPageCount > 1
                 ? 'Drag to move, pinch to resize. Tap "Add" for each page, then "Apply".'
                 : 'Drag to move, pinch to resize. Tap "Add", then "Apply".'}
@@ -1174,7 +1119,7 @@ export default function App() {
               <Text style={styles.backButton}>Back</Text>
             </TouchableOpacity>
             <Text style={styles.headerTitle}>Sign Document</Text>
-            <View style={{ width: 50 }} />
+            <View style={styles.headerSpacer} />
           </View>
 
           <ScrollView contentContainerStyle={styles.scrollContent}>
@@ -1224,7 +1169,7 @@ export default function App() {
                 </Text>
 
                 <TouchableOpacity
-                  style={[styles.button, { marginTop: 12 }]}
+                  style={[styles.button, styles.mt12]}
                   onPress={handleVerifySignature}
                 >
                   <Text style={styles.buttonText}>Verify Signature</Text>
@@ -1246,7 +1191,7 @@ export default function App() {
               <Text style={styles.backButton}>Back</Text>
             </TouchableOpacity>
             <Text style={styles.headerTitle}>Verification Result</Text>
-            <View style={{ width: 50 }} />
+            <View style={styles.headerSpacer} />
           </View>
 
           <ScrollView contentContainerStyle={styles.scrollContent}>
@@ -1334,7 +1279,7 @@ export default function App() {
               <Text style={styles.backButton}>Back</Text>
             </TouchableOpacity>
             <Text style={styles.headerTitle}>Documents</Text>
-            <View style={{ width: 50 }} />
+            <View style={styles.headerSpacer} />
           </View>
 
           <ScrollView contentContainerStyle={styles.scrollContent}>
@@ -2044,6 +1989,14 @@ const styles = StyleSheet.create({
     gap: 16,
     marginTop: 8,
   },
+  modalCancelButton: {
+    marginTop: 12,
+    alignItems: 'center',
+    padding: 8,
+  },
+  modalActionBtn: {
+    padding: 8,
+  },
   modalCancel: {
     fontSize: 17,
     color: '#8E8E93',
@@ -2054,7 +2007,85 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 
+  // Header spacer
+  headerSpacer: {
+    width: 50,
+  },
+  mt12: {
+    marginTop: 12,
+  },
+
+  // Placement screen
+  placementCancel: {
+    color: '#e94560',
+  },
+  placementAction: {
+    color: '#e94560',
+    fontWeight: '700',
+  },
+  placementView: {
+    flex: 1,
+    margin: 12,
+    borderRadius: 8,
+    overflow: 'hidden',
+  },
+  placementHint: {
+    color: '#666',
+    fontSize: 12,
+    textAlign: 'center',
+    paddingVertical: 10,
+  },
+
+  // Page navigation
+  pageNavRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    gap: 20,
+  },
+  pageNavBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#16213e',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  pageNavBtnDisabled: {
+    opacity: 0.3,
+  },
+  pageNavBtnText: {
+    color: '#ffffff',
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  pageNavLabel: {
+    color: '#aaa',
+    fontSize: 14,
+  },
+
+  // Apply button
+  applyBtn: {
+    backgroundColor: '#e94560',
+    marginHorizontal: 24,
+    paddingVertical: 14,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  applyBtnDisabled: {
+    backgroundColor: '#333',
+  },
+  applyBtnText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+
   // Certificate picker
+  certPickerList: {
+    maxHeight: 300,
+  },
   certPickerItem: {
     padding: 14,
     borderBottomWidth: StyleSheet.hairlineWidth,
