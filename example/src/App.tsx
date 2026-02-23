@@ -89,6 +89,9 @@ export default function App() {
   const placementRef = useRef<SignaturePlacementRef>(null);
   const [placementPageIndex, setPlacementPageIndex] = useState(0);
   const [placementPageCount, setPlacementPageCount] = useState(1);
+  const [collectedPlacements, setCollectedPlacements] = useState<
+    Map<number, { pageIndex: number; x: number; y: number; width: number; height: number }>
+  >(new Map());
 
   // Certificate picker state
   const [showCertPicker, setShowCertPicker] = useState(false);
@@ -218,49 +221,69 @@ export default function App() {
     }
     setPlacementPageIndex(0);
     setPlacementPageCount(1);
+    setCollectedPlacements(new Map());
     setScreen('placement');
   }, [pdfUrl, signatureImageUrl]);
 
-  const handlePlacementConfirm = useCallback(
-    async (placement: {
+  // Store placement for current page (used for both single and multi-page)
+  const handlePlacementAdd = useCallback(
+    (placement: {
       pageIndex: number;
       x: number;
       y: number;
       width: number;
       height: number;
     }) => {
-      if (!pdfUrl || !signatureImageUrl) return;
-
-      try {
-        setScreen('sign');
-        setIsLoading(true);
-        setLoadingText('Adding signature to PDF...');
-
-        const result = await Neurosign.addSignatureImage({
-          pdfUrl,
-          signatureImageUrl,
-          ...placement,
-        });
-
-        setPdfUrl(result.pdfUrl);
-
-        // Update active document's pdfUrl
-        if (activeDocumentId != null) {
-          setDocuments((prev) =>
-            prev.map((d) =>
-              d.id === activeDocumentId ? { ...d, pdfUrl: result.pdfUrl } : d
-            )
-          );
-        }
-
-        Alert.alert('Signature Added', 'Visual signature placed on PDF');
-      } catch (error: any) {
-        Alert.alert('Error', error.message || 'Failed to add signature');
-      } finally {
-        setIsLoading(false);
-      }
+      setCollectedPlacements((prev) => {
+        const next = new Map(prev);
+        next.set(placement.pageIndex, placement);
+        return next;
+      });
     },
-    [pdfUrl, signatureImageUrl, activeDocumentId]
+    []
+  );
+
+  // Apply all collected placements at once
+  const handleApplyAllPlacements = useCallback(async () => {
+    if (!pdfUrl || !signatureImageUrl || collectedPlacements.size === 0) return;
+
+    try {
+      setScreen('sign');
+      setIsLoading(true);
+      setLoadingText('Adding signatures to PDF...');
+
+      const placements = Array.from(collectedPlacements.values());
+      const first = placements[0]!;
+
+      const result = await Neurosign.addSignatureImage({
+        pdfUrl,
+        signatureImageUrl,
+        pageIndex: first.pageIndex,
+        x: first.x,
+        y: first.y,
+        width: first.width,
+        height: first.height,
+        placements,
+      });
+
+      setPdfUrl(result.pdfUrl);
+
+      if (activeDocumentId != null) {
+        setDocuments((prev) =>
+          prev.map((d) =>
+            d.id === activeDocumentId ? { ...d, pdfUrl: result.pdfUrl } : d
+          )
+        );
+      }
+
+      setCollectedPlacements(new Map());
+      Alert.alert('Signatures Added', `Visual signature placed on ${placements.length} page(s)`);
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to add signature');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [pdfUrl, signatureImageUrl, collectedPlacements, activeDocumentId]
   );
 
   // ── Step 5: Generate self-signed certificate ──
@@ -960,12 +983,14 @@ export default function App() {
         <SafeAreaView style={styles.container}>
           {/* Header */}
           <View style={styles.header}>
-            <TouchableOpacity onPress={() => setScreen('sign')}>
+            <TouchableOpacity onPress={() => { setCollectedPlacements(new Map()); setScreen('sign'); }}>
               <Text style={[styles.backButton, { color: '#e94560' }]}>Cancel</Text>
             </TouchableOpacity>
             <Text style={styles.headerTitle}>Place Signature</Text>
             <TouchableOpacity onPress={() => placementRef.current?.confirm()}>
-              <Text style={[styles.backButton, { color: '#e94560', fontWeight: '700' }]}>Confirm</Text>
+              <Text style={[styles.backButton, { color: '#e94560', fontWeight: '700' }]}>
+                {collectedPlacements.has(placementPageIndex) ? 'Update' : 'Add'}
+              </Text>
             </TouchableOpacity>
           </View>
 
@@ -976,7 +1001,7 @@ export default function App() {
             signatureImageUrl={signatureImageUrl}
             pageIndex={placementPageIndex}
             backgroundColor="#0f3460"
-            onPlacementConfirmed={handlePlacementConfirm}
+            onPlacementConfirmed={handlePlacementAdd}
             onPageCount={(count) => setPlacementPageCount(count)}
             style={{ flex: 1, margin: 12, borderRadius: 8, overflow: 'hidden' }}
           />
@@ -993,6 +1018,7 @@ export default function App() {
               </TouchableOpacity>
               <Text style={{ color: '#aaa', fontSize: 14 }}>
                 Page {placementPageIndex + 1} of {placementPageCount}
+                {collectedPlacements.has(placementPageIndex) ? ' \u2713' : ''}
               </Text>
               <TouchableOpacity
                 onPress={() => setPlacementPageIndex((p) => Math.min(placementPageCount - 1, p + 1))}
@@ -1004,8 +1030,29 @@ export default function App() {
             </View>
           )}
 
-          <Text style={{ color: '#666', fontSize: 12, textAlign: 'center', paddingBottom: 16 }}>
-            Drag to move, pinch to resize
+          {/* Apply button */}
+          <TouchableOpacity
+            onPress={handleApplyAllPlacements}
+            disabled={collectedPlacements.size === 0}
+            style={{
+              backgroundColor: collectedPlacements.size > 0 ? '#e94560' : '#333',
+              marginHorizontal: 24,
+              paddingVertical: 14,
+              borderRadius: 10,
+              alignItems: 'center',
+            }}
+          >
+            <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>
+              {collectedPlacements.size > 0
+                ? `Apply to ${collectedPlacements.size} page(s)`
+                : 'Tap "Add" to place signature'}
+            </Text>
+          </TouchableOpacity>
+
+          <Text style={{ color: '#666', fontSize: 12, textAlign: 'center', paddingVertical: 10 }}>
+            {placementPageCount > 1
+              ? 'Drag to move, pinch to resize. Tap "Add" for each page, then "Apply".'
+              : 'Drag to move, pinch to resize. Tap "Add", then "Apply".'}
           </Text>
         </SafeAreaView>
       </View>

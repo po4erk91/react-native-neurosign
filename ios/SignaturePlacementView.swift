@@ -1,4 +1,5 @@
 import UIKit
+import React
 
 @objcMembers
 public class SignaturePlacementView: UIView, UIGestureRecognizerDelegate {
@@ -14,7 +15,7 @@ public class SignaturePlacementView: UIView, UIGestureRecognizerDelegate {
     private let signatureImageView: UIImageView = {
         let iv = UIImageView()
         iv.contentMode = .scaleToFill
-        iv.isUserInteractionEnabled = true
+        iv.isUserInteractionEnabled = false
         iv.frame = .zero
         return iv
     }()
@@ -38,6 +39,7 @@ public class SignaturePlacementView: UIView, UIGestureRecognizerDelegate {
     private var pdfDocument: CGPDFDocument?
     private var currentPageIndex: Int = 0
     private var totalPageCount: Int = 0
+    private var needsInitialPosition: Bool = true
 
     // Signature position/size in view coordinates
     private var sigX: CGFloat = 0
@@ -109,6 +111,37 @@ public class SignaturePlacementView: UIView, UIGestureRecognizerDelegate {
         return true
     }
 
+    /// Prevent React Native's touch handler from blocking our pinch/pan gestures
+    public func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer
+    ) -> Bool {
+        // If our gesture is pinch or pan, don't let RN's touch handler require us to fail
+        return false
+    }
+
+    // Disable React Native touch interception on this view
+    public override func didMoveToWindow() {
+        super.didMoveToWindow()
+        disableRCTTouchHandler()
+    }
+
+    private func disableRCTTouchHandler() {
+        // Walk up responder chain to find RCTTouchHandler and make it yield to our gestures
+        var current: UIView? = self
+        while let view = current {
+            for recognizer in view.gestureRecognizers ?? [] {
+                let name = String(describing: type(of: recognizer))
+                if name.contains("RCTTouchHandler") || name.contains("RCTRootContentView") {
+                    for myGR in gestureRecognizers ?? [] {
+                        recognizer.require(toFail: myGR)
+                    }
+                }
+            }
+            current = view.superview
+        }
+    }
+
     // MARK: - Props
 
     public var pdfUrl: NSString? {
@@ -129,6 +162,7 @@ public class SignaturePlacementView: UIView, UIGestureRecognizerDelegate {
         didSet {
             if pageIndex != currentPageIndex {
                 currentPageIndex = pageIndex
+                needsInitialPosition = true
                 renderCurrentPage()
             }
         }
@@ -235,7 +269,9 @@ public class SignaturePlacementView: UIView, UIGestureRecognizerDelegate {
     }
 
     public func reset() {
+        needsInitialPosition = true
         positionSignatureDefault()
+        needsInitialPosition = false
         updateSignatureLayout()
     }
 
@@ -296,15 +332,22 @@ public class SignaturePlacementView: UIView, UIGestureRecognizerDelegate {
 
     // MARK: - Layout
 
+    private var lastRenderedBounds: CGSize = .zero
+
     public override func layoutSubviews() {
         super.layoutSubviews()
-        if bounds.width > 0 && bounds.height > 0 {
+        let size = bounds.size
+        if size.width > 0 && size.height > 0 && size != lastRenderedBounds {
+            lastRenderedBounds = size
             renderCurrentPage()
         }
     }
 
     private func updateSignatureLayout() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
         signatureImageView.frame = CGRect(x: sigX, y: sigY, width: sigWidth, height: sigHeight)
+        CATransaction.commit()
         updateOverlayLayers()
     }
 
@@ -376,9 +419,15 @@ public class SignaturePlacementView: UIView, UIGestureRecognizerDelegate {
 
         pdfDocument = document
         totalPageCount = document.numberOfPages
-        onPageCount?(["count": totalPageCount])
+        needsInitialPosition = true
 
         renderCurrentPage()
+
+        // Defer onPageCount to ensure React callback props are set
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.onPageCount?(["count": self.totalPageCount])
+        }
     }
 
     private func renderCurrentPage() {
@@ -437,7 +486,13 @@ public class SignaturePlacementView: UIView, UIGestureRecognizerDelegate {
         pdfImageView.image = image
         pdfImageView.frame = pdfDisplayRect
 
-        positionSignatureDefault()
+        if needsInitialPosition {
+            positionSignatureDefault()
+            needsInitialPosition = false
+        }
+        // Re-clamp in case display rect changed on resize
+        sigX = clampX(sigX)
+        sigY = clampY(sigY)
         updateSignatureLayout()
     }
 

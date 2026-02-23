@@ -18,6 +18,7 @@ Pod::Spec.new do |s|
   s.swift_version = "5.9"
 
   s.frameworks   = "UIKit", "PencilKit", "PDFKit", "Security"
+  s.prefix_header_contents = '#import <PencilKit/PencilKit.h>'
 
   # OpenSSL for CMS/PKCS#7 container construction (PAdES signing)
   s.dependency "OpenSSL-Universal", "~> 3.3"
@@ -25,7 +26,7 @@ Pod::Spec.new do |s|
   s.pod_target_xcconfig = {
     "CLANG_CXX_LANGUAGE_STANDARD" => "c++20",
     "GCC_PREPROCESSOR_DEFINITIONS" => "$(inherited)",
-    "CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES" => "YES"
+    "CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES" => "YES",
   }
 
   install_modules_dependencies(s)

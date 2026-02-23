@@ -8,6 +8,7 @@ import android.os.ParcelFileDescriptor
 import com.facebook.react.bridge.*
 import kotlinx.coroutines.*
 import android.net.Uri
+import android.util.Log
 import java.io.File
 import java.io.FileOutputStream
 import java.util.UUID
@@ -15,7 +16,15 @@ import java.util.UUID
 class NeurosignModule(reactContext: ReactApplicationContext) :
     NativeNeurosignSpec(reactContext) {
 
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
+        Log.e(NAME, "Uncaught coroutine exception", throwable)
+    }
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob() + exceptionHandler)
+
+    override fun invalidate() {
+        super.invalidate()
+        scope.cancel()
+    }
 
     private val tempDir: File
         get() {
@@ -42,7 +51,7 @@ class NeurosignModule(reactContext: ReactApplicationContext) :
 
         scope.launch {
             try {
-                val pages = mutableListOf<PdfPageData>()
+                val pages = mutableListOf<PdfGenerator.PageData>()
 
                 for (i in 0 until imageUrls.size()) {
                     val urlString = imageUrls.getString(i) ?: continue
@@ -67,7 +76,7 @@ class NeurosignModule(reactContext: ReactApplicationContext) :
                     bitmap.compress(Bitmap.CompressFormat.JPEG, quality, jpegStream)
                     val jpegBytes = jpegStream.toByteArray()
 
-                    pages.add(PdfPageData(
+                    pages.add(PdfGenerator.PageData(
                         jpegBytes = jpegBytes,
                         imgWidth = bitmap.width,
                         imgHeight = bitmap.height,
@@ -91,7 +100,7 @@ class NeurosignModule(reactContext: ReactApplicationContext) :
                 val outputFile = File(tempDir, outputFileName)
 
                 // Write PDF directly with JPEG images at native resolution
-                writePdfWithImages(outputFile, pages)
+                PdfGenerator.writePdfWithImages(outputFile, pages)
 
                 val result = Arguments.createMap().apply {
                     putString("pdfUrl", "file://${outputFile.absolutePath}")
@@ -104,144 +113,43 @@ class NeurosignModule(reactContext: ReactApplicationContext) :
         }
     }
 
-    /**
-     * Write a PDF file with JPEG images embedded at their native resolution.
-     * This avoids Android's PdfDocument which downsamples images to 72 DPI.
-     *
-     * PDF structure:
-     *   1 0 obj - Catalog
-     *   2 0 obj - Pages
-     *   For each page i (0-based):
-     *     (3 + i*3) 0 obj - Image XObject (JPEG)
-     *     (4 + i*3) 0 obj - Content stream (image placement)
-     *     (5 + i*3) 0 obj - Page dictionary
-     */
-    private data class PdfPageData(
-        val jpegBytes: ByteArray,
-        val imgWidth: Int,
-        val imgHeight: Int,
-        val pageWidthPt: Float,
-        val pageHeightPt: Float,
-        val drawX: Float,
-        val drawY: Float,
-        val drawW: Float,
-        val drawH: Float
-    )
-
-    private fun writePdfWithImages(outputFile: File, pages: List<PdfPageData>) {
-        val out = java.io.ByteArrayOutputStream()
-        val offsets = mutableMapOf<Int, Int>() // objNum -> byte offset
-        val ff = { v: Float -> String.format(java.util.Locale.US, "%.4f", v) }
-
-        // Header
-        out.write("%PDF-1.4\n%\u00E2\u00E3\u00CF\u00D3\n".toByteArray(Charsets.ISO_8859_1))
-
-        val numPages = pages.size
-        // Object numbers:
-        // 1 = Catalog, 2 = Pages
-        // Per page: imgObj = 3+i*3, csObj = 4+i*3, pageObj = 5+i*3
-        val totalObjects = 2 + numPages * 3
-
-        // Page object numbers for /Kids array
-        val pageObjNums = (0 until numPages).map { 5 + it * 3 }
-
-        // ── Write Image XObjects and Content Streams for each page ──
-        for (i in 0 until numPages) {
-            val pg = pages[i]
-            val imgObjNum = 3 + i * 3
-            val csObjNum = 4 + i * 3
-
-            // Image XObject
-            offsets[imgObjNum] = out.size()
-            val imgHeader = buildString {
-                append("$imgObjNum 0 obj\n")
-                append("<< /Type /XObject /Subtype /Image\n")
-                append("/Width ${pg.imgWidth} /Height ${pg.imgHeight}\n")
-                append("/BitsPerComponent 8 /ColorSpace /DeviceRGB\n")
-                append("/Filter /DCTDecode /Length ${pg.jpegBytes.size} >>\n")
-                append("stream\n")
-            }
-            out.write(imgHeader.toByteArray(Charsets.US_ASCII))
-            out.write(pg.jpegBytes)
-            out.write("\nendstream\nendobj\n".toByteArray(Charsets.US_ASCII))
-
-            // Content stream: position image on page
-            val csContent = "q\n${ff(pg.drawW)} 0 0 ${ff(pg.drawH)} ${ff(pg.drawX)} ${ff(pg.drawY)} cm\n/Img Do\nQ\n"
-            val csBytes = csContent.toByteArray(Charsets.US_ASCII)
-
-            offsets[csObjNum] = out.size()
-            val csHeader = "$csObjNum 0 obj\n<< /Length ${csBytes.size} >>\nstream\n"
-            out.write(csHeader.toByteArray(Charsets.US_ASCII))
-            out.write(csBytes)
-            out.write("\nendstream\nendobj\n".toByteArray(Charsets.US_ASCII))
-        }
-
-        // ── Write Page objects ──
-        for (i in 0 until numPages) {
-            val pg = pages[i]
-            val pageObjNum = 5 + i * 3
-            val imgObjNum = 3 + i * 3
-            val csObjNum = 4 + i * 3
-
-            offsets[pageObjNum] = out.size()
-            val pageObj = buildString {
-                append("$pageObjNum 0 obj\n")
-                append("<< /Type /Page /Parent 2 0 R\n")
-                append("/MediaBox [0 0 ${ff(pg.pageWidthPt)} ${ff(pg.pageHeightPt)}]\n")
-                append("/Contents $csObjNum 0 R\n")
-                append("/Resources << /XObject << /Img $imgObjNum 0 R >> >> >>\n")
-                append("endobj\n")
-            }
-            out.write(pageObj.toByteArray(Charsets.US_ASCII))
-        }
-
-        // ── Pages object ──
-        offsets[2] = out.size()
-        val kidsStr = pageObjNums.joinToString(" ") { "$it 0 R" }
-        val pagesObj = "2 0 obj\n<< /Type /Pages /Kids [$kidsStr] /Count $numPages >>\nendobj\n"
-        out.write(pagesObj.toByteArray(Charsets.US_ASCII))
-
-        // ── Catalog ──
-        offsets[1] = out.size()
-        val catalogObj = "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
-        out.write(catalogObj.toByteArray(Charsets.US_ASCII))
-
-        // ── Cross-reference table ──
-        val xrefOffset = out.size()
-        val xrefSb = StringBuilder()
-        xrefSb.append("xref\n")
-        xrefSb.append("0 ${totalObjects + 1}\n")
-        xrefSb.append("0000000000 65535 f \n")
-        for (objNum in 1..totalObjects) {
-            val offset = offsets[objNum] ?: 0
-            xrefSb.append(String.format("%010d 00000 n \n", offset))
-        }
-
-        // ── Trailer ──
-        xrefSb.append("trailer\n")
-        xrefSb.append("<< /Size ${totalObjects + 1} /Root 1 0 R >>\n")
-        xrefSb.append("startxref\n")
-        xrefSb.append("$xrefOffset\n")
-        xrefSb.append("%%EOF\n")
-        out.write(xrefSb.toString().toByteArray(Charsets.US_ASCII))
-
-        outputFile.writeBytes(out.toByteArray())
-    }
-
     // MARK: - addSignatureImage
 
     override fun addSignatureImage(options: ReadableMap, promise: Promise) {
         val pdfUrl = options.getString("pdfUrl")
         val signatureImageUrl = options.getString("signatureImageUrl")
-        val pageIndex = options.getInt("pageIndex")
-        val x = options.getDouble("x").toFloat()
-        val y = options.getDouble("y").toFloat()
-        val width = options.getDouble("width").toFloat()
-        val height = options.getDouble("height").toFloat()
 
         if (pdfUrl == null || signatureImageUrl == null) {
             promise.reject("INVALID_INPUT", "pdfUrl and signatureImageUrl are required")
             return
+        }
+
+        // Parse placements array or fall back to single placement fields
+        data class Placement(val pageIndex: Int, val x: Float, val y: Float, val width: Float, val height: Float)
+
+        val placements = mutableListOf<Placement>()
+        val rawPlacements = if (options.hasKey("placements")) options.getArray("placements") else null
+
+        if (rawPlacements != null && rawPlacements.size() > 0) {
+            for (i in 0 until rawPlacements.size()) {
+                val p = rawPlacements.getMap(i) ?: continue
+                placements.add(Placement(
+                    pageIndex = p.getInt("pageIndex"),
+                    x = p.getDouble("x").toFloat(),
+                    y = p.getDouble("y").toFloat(),
+                    width = p.getDouble("width").toFloat(),
+                    height = p.getDouble("height").toFloat()
+                ))
+            }
+        } else {
+            // Backward compat: single placement
+            placements.add(Placement(
+                pageIndex = options.getInt("pageIndex"),
+                x = options.getDouble("x").toFloat(),
+                y = options.getDouble("y").toFloat(),
+                width = options.getDouble("width").toFloat(),
+                height = options.getDouble("height").toFloat()
+            ))
         }
 
         scope.launch {
@@ -250,39 +158,79 @@ class NeurosignModule(reactContext: ReactApplicationContext) :
                 val signatureBitmap = loadBitmap(signatureImageUrl)
                     ?: throw Exception("Cannot load signature image")
 
-                // Flatten transparency: draw onto white background (JPEG has no alpha)
-                val flatBitmap = Bitmap.createBitmap(
-                    signatureBitmap.width, signatureBitmap.height, Bitmap.Config.ARGB_8888
-                )
-                val canvas = Canvas(flatBitmap)
-                canvas.drawColor(android.graphics.Color.WHITE)
-                canvas.drawBitmap(signatureBitmap, 0f, 0f, null)
-                signatureBitmap.recycle()
+                val imgWidth: Int
+                val imgHeight: Int
+                val pixels: IntArray
 
-                // Compress to JPEG bytes for embedding in PDF
-                val jpegStream = java.io.ByteArrayOutputStream()
-                flatBitmap.compress(Bitmap.CompressFormat.JPEG, 95, jpegStream)
-                val jpegBytes = jpegStream.toByteArray()
-                val imgWidth = flatBitmap.width
-                val imgHeight = flatBitmap.height
-                flatBitmap.recycle()
+                try {
+                    imgWidth = signatureBitmap.width
+                    imgHeight = signatureBitmap.height
+
+                    // Guard against OOM from oversized images
+                    val maxPixels = 4096 * 4096
+                    val totalPixels = imgWidth.toLong() * imgHeight.toLong()
+                    if (totalPixels > maxPixels) {
+                        throw IllegalArgumentException(
+                            "Signature image too large: ${imgWidth}x${imgHeight} " +
+                            "(max ${maxPixels / 1024 / 1024}M pixels)"
+                        )
+                    }
+
+                    // Extract raw ARGB pixels and split into RGB + Alpha channels
+                    pixels = IntArray(imgWidth * imgHeight)
+                    signatureBitmap.getPixels(pixels, 0, imgWidth, 0, 0, imgWidth, imgHeight)
+                } finally {
+                    signatureBitmap.recycle()
+                }
+
+                val rgbBytes = ByteArray(imgWidth * imgHeight * 3)
+                val alphaBytes = ByteArray(imgWidth * imgHeight)
+                var hasAlpha = false
+
+                for (i in pixels.indices) {
+                    val pixel = pixels[i]
+                    rgbBytes[i * 3]     = ((pixel shr 16) and 0xFF).toByte() // R
+                    rgbBytes[i * 3 + 1] = ((pixel shr 8) and 0xFF).toByte()  // G
+                    rgbBytes[i * 3 + 2] = (pixel and 0xFF).toByte()           // B
+                    val alpha = ((pixel shr 24) and 0xFF).toByte()
+                    alphaBytes[i] = alpha
+                    if (alpha != 0xFF.toByte()) hasAlpha = true
+                }
 
                 val visBaseName = pdfFile.nameWithoutExtension
                 val outputFile = File(tempDir, "${visBaseName}_visual.pdf")
 
-                // Use incremental update to preserve vector content
-                PdfSigner.addSignatureImage(
-                    pdfFile = pdfFile,
-                    imageBytes = jpegBytes,
-                    imageWidth = imgWidth,
-                    imageHeight = imgHeight,
-                    pageIndex = pageIndex,
-                    x = x,
-                    y = y,
-                    width = width,
-                    height = height,
-                    outputFile = outputFile
-                )
+                // Chain incremental updates for each placement
+                val intermediateTempFiles = mutableListOf<File>()
+                var currentInput = pdfFile
+                try {
+                    for ((index, p) in placements.withIndex()) {
+                        val isLast = index == placements.size - 1
+                        val currentOutput = if (isLast) outputFile
+                            else File(tempDir, "sig_step_${UUID.randomUUID()}.pdf").also {
+                                intermediateTempFiles.add(it)
+                            }
+
+                        PdfSigner.addSignatureImage(
+                            pdfFile = currentInput,
+                            rgbBytes = rgbBytes,
+                            alphaBytes = if (hasAlpha) alphaBytes else null,
+                            imageWidth = imgWidth,
+                            imageHeight = imgHeight,
+                            pageIndex = p.pageIndex,
+                            x = p.x,
+                            y = p.y,
+                            width = p.width,
+                            height = p.height,
+                            outputFile = currentOutput
+                        )
+
+                        currentInput = currentOutput
+                    }
+                } finally {
+                    // Always clean up intermediate temp files
+                    intermediateTempFiles.forEach { it.delete() }
+                }
 
                 val result = Arguments.createMap().apply {
                     putString("pdfUrl", "file://${outputFile.absolutePath}")
@@ -311,13 +259,13 @@ class NeurosignModule(reactContext: ReactApplicationContext) :
             try {
                 val pdfFile = urlToFile(pdfUrl)
                 val descriptor = ParcelFileDescriptor.open(pdfFile, ParcelFileDescriptor.MODE_READ_ONLY)
+                try {
                 val renderer = PdfRenderer(descriptor)
+                try {
                 val totalPages = renderer.pageCount
 
                 if (pageIndex < 0 || pageIndex >= totalPages) {
                     promise.reject("INVALID_INPUT", "pageIndex $pageIndex out of range (0..${totalPages - 1})")
-                    renderer.close()
-                    descriptor.close()
                     return@launch
                 }
 
@@ -333,6 +281,7 @@ class NeurosignModule(reactContext: ReactApplicationContext) :
                 val renderHeight = (pageHeight * scale).toInt()
 
                 val bitmap = Bitmap.createBitmap(renderWidth, renderHeight, Bitmap.Config.ARGB_8888)
+                try {
                 val canvas = Canvas(bitmap)
                 canvas.drawColor(android.graphics.Color.WHITE)
 
@@ -340,14 +289,11 @@ class NeurosignModule(reactContext: ReactApplicationContext) :
                 matrix.setScale(scale, scale)
                 pdfPage.render(bitmap, null, matrix, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
                 pdfPage.close()
-                renderer.close()
-                descriptor.close()
 
                 val outputFile = File(tempDir, "page_${pageIndex}_${UUID.randomUUID()}.png")
                 FileOutputStream(outputFile).use { out ->
                     bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
                 }
-                bitmap.recycle()
 
                 val result = Arguments.createMap().apply {
                     putString("imageUrl", "file://${outputFile.absolutePath}")
@@ -356,6 +302,15 @@ class NeurosignModule(reactContext: ReactApplicationContext) :
                     putInt("pageCount", totalPages)
                 }
                 promise.resolve(result)
+                } finally {
+                    bitmap.recycle()
+                }
+                } finally {
+                    renderer.close()
+                }
+                } finally {
+                    descriptor.close()
+                }
             } catch (e: Exception) {
                 promise.reject("PDF_GENERATION_FAILED", e.message, e)
             }
@@ -609,13 +564,15 @@ class NeurosignModule(reactContext: ReactApplicationContext) :
     // MARK: - cleanupTempFiles
 
     override fun cleanupTempFiles(promise: Promise) {
-        try {
-            if (tempDir.exists()) {
-                tempDir.deleteRecursively()
+        scope.launch {
+            try {
+                if (tempDir.exists()) {
+                    tempDir.deleteRecursively()
+                }
+                promise.resolve(true)
+            } catch (e: Exception) {
+                promise.reject("CLEANUP_FAILED", e.message, e)
             }
-            promise.resolve(true)
-        } catch (e: Exception) {
-            promise.reject("CLEANUP_FAILED", e.message, e)
         }
     }
 

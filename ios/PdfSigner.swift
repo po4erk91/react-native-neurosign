@@ -27,7 +27,7 @@ public class PdfSigner: NSObject {
     /// Parse the PDF trailer to extract /Root, /Size, and previous startxref.
     private static func parseTrailer(in data: Data, eofPos: Int) -> TrailerInfo? {
         let endIdx = min(eofPos + 10, data.count)
-        guard let text = String(data: data[0..<endIdx], encoding: .ascii) else { return nil }
+        guard let text = String(data: data[0..<endIdx], encoding: .isoLatin1) else { return nil }
 
         // Find startxref value
         guard let startxrefRange = text.range(of: "startxref", options: .backwards) else { return nil }
@@ -74,21 +74,21 @@ public class PdfSigner: NSObject {
     /// Find the dictionary content of a PDF indirect object.
     /// Uses word-boundary check to avoid matching "12 0 obj" when searching for "2 0 obj".
     private static func findObjectDict(in data: Data, objNum: Int) -> String? {
-        guard let text = String(data: data, encoding: .ascii) else { return nil }
+        guard let text = String(data: data, encoding: .isoLatin1) else { return nil }
         let objHeader = "\(objNum) 0 obj"
 
-        // Search with word boundary: char before must not be a digit
+        // Search for the LAST definition — critical for PDFs with incremental updates
+        // where the same object number is redefined in appended sections.
         var searchStart = text.startIndex
         var objRange: Range<String.Index>? = nil
         while let range = text.range(of: objHeader, range: searchStart..<text.endIndex) {
             if range.lowerBound == text.startIndex {
-                objRange = range
-                break
-            }
-            let charBefore = text[text.index(before: range.lowerBound)]
-            if !charBefore.isNumber {
-                objRange = range
-                break
+                objRange = range  // keep going to find last occurrence
+            } else {
+                let charBefore = text[text.index(before: range.lowerBound)]
+                if !charBefore.isNumber {
+                    objRange = range  // keep going to find last occurrence
+                }
             }
             searchStart = range.upperBound
         }
@@ -1013,7 +1013,7 @@ public class PdfSigner: NSObject {
     }
 
     private static func findSignatureDictionaries(in data: Data) -> [ParsedSignature] {
-        let text = String(data: data, encoding: .ascii) ?? ""
+        let text = String(data: data, encoding: .isoLatin1) ?? ""
         var results: [ParsedSignature] = []
 
         var searchRange = text.startIndex..<text.endIndex

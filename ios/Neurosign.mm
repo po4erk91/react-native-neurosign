@@ -1,4 +1,5 @@
 #import "Neurosign.h"
+#import <React/RCTViewManager.h>
 
 // Import Swift-generated header
 #if __has_include("react_native_neurosign/react_native_neurosign-Swift.h")
@@ -30,7 +31,11 @@
 - (void)generatePdf:(JS::NativeNeurosign::SpecGeneratePdfOptions &)options
             resolve:(RCTPromiseResolveBlock)resolve
              reject:(RCTPromiseRejectBlock)reject {
-    NSArray<NSString *> *imageUrls = [self convertStringArray:options.imageUrls()];
+    auto lazyUrls = options.imageUrls();
+    NSMutableArray<NSString *> *imageUrls = [NSMutableArray new];
+    for (size_t i = 0; i < lazyUrls.size(); i++) {
+        [imageUrls addObject:lazyUrls[i]];
+    }
     NSString *fileName = options.fileName() ?: @"document";
     NSString *pageSize = options.pageSize() ?: @"A4";
     double pageMargin = options.pageMargin().has_value() ? options.pageMargin().value() : 20;
@@ -55,19 +60,37 @@
                    reject:(RCTPromiseRejectBlock)reject {
     NSString *pdfUrl = options.pdfUrl();
     NSString *signatureImageUrl = options.signatureImageUrl();
-    double pageIndex = options.pageIndex();
-    double x = options.x();
-    double y = options.y();
-    double width = options.width();
-    double height = options.height();
+
+    NSMutableArray<NSDictionary *> *placements = [NSMutableArray new];
+
+    // Check if placements array is provided
+    auto rawPlacements = options.placements();
+    if (rawPlacements.has_value() && rawPlacements.value().size() > 0) {
+        auto placementsVec = rawPlacements.value();
+        for (size_t i = 0; i < placementsVec.size(); i++) {
+            auto p = placementsVec[i];
+            [placements addObject:@{
+                @"pageIndex": @(p.pageIndex()),
+                @"x": @(p.x()),
+                @"y": @(p.y()),
+                @"width": @(p.width()),
+                @"height": @(p.height()),
+            }];
+        }
+    } else {
+        // Backward compat: use single placement fields
+        [placements addObject:@{
+            @"pageIndex": @(options.pageIndex()),
+            @"x": @(options.x()),
+            @"y": @(options.y()),
+            @"width": @(options.width()),
+            @"height": @(options.height()),
+        }];
+    }
 
     [_impl addSignatureImageWithPdfUrl:pdfUrl
                      signatureImageUrl:signatureImageUrl
-                             pageIndex:(NSInteger)pageIndex
-                                     x:x
-                                     y:y
-                                 width:width
-                                height:height
+                            placements:placements
                               resolver:^(NSDictionary *result) {
         resolve(result);
     } rejecter:^(NSString *code, NSString *message, NSError *error) {
@@ -256,15 +279,6 @@
     } rejecter:^(NSString *code, NSString *message, NSError *error) {
         reject(code, message, error);
     }];
-}
-
-// MARK: - Helpers
-
-- (NSArray<NSString *> *)convertStringArray:(id)input {
-    if ([input isKindOfClass:[NSArray class]]) {
-        return (NSArray<NSString *> *)input;
-    }
-    return @[];
 }
 
 // MARK: - TurboModule

@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.*
 import android.view.MotionEvent
 import android.view.View
+import kotlinx.coroutines.*
 import java.io.File
 import java.io.FileOutputStream
 import java.util.UUID
@@ -18,6 +19,10 @@ import java.util.UUID
  * - Velocity-weighted smoothing
  */
 class SignaturePadView(context: Context) : View(context) {
+
+    companion object {
+        private const val MAX_UNDO_STACK = 20
+    }
 
     // Drawing state
     private val currentPath = Path()
@@ -155,6 +160,7 @@ class SignaturePadView(context: Context) : View(context) {
     fun clear() {
         if (paths.isNotEmpty()) {
             undoStack.add(paths.toList())
+            if (undoStack.size > MAX_UNDO_STACK) undoStack.removeAt(0)
         }
         paths.clear()
         currentPath.reset()
@@ -166,7 +172,8 @@ class SignaturePadView(context: Context) : View(context) {
     fun undo() {
         if (paths.isNotEmpty()) {
             redoStack.add(paths.toList())
-            val last = paths.removeAt(paths.size - 1)
+            if (redoStack.size > MAX_UNDO_STACK) redoStack.removeAt(0)
+            paths.removeAt(paths.size - 1)
             invalidate()
             onDrawingChanged?.invoke(paths.isNotEmpty())
         }
@@ -188,37 +195,46 @@ class SignaturePadView(context: Context) : View(context) {
             return
         }
 
-        // Calculate signature bounds
+        // Snapshot paths on UI thread (they are mutable)
+        val pathSnapshot = paths.map { (path, paint) -> Path(path) to Paint(paint) }
         val bounds = calculateBounds()
-        val padding = 10f
-        val signatureWidth = (bounds.width() + padding * 2).toInt().coerceAtLeast(1)
-        val signatureHeight = (bounds.height() + padding * 2).toInt().coerceAtLeast(1)
 
-        val bitmap = Bitmap.createBitmap(signatureWidth, signatureHeight, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(bitmap)
-        canvas.drawColor(Color.TRANSPARENT)
+        // Bitmap creation + file I/O on background thread to avoid ANR
+        CoroutineScope(Dispatchers.IO).launch {
+            val padding = 10f
+            val signatureWidth = (bounds.width() + padding * 2).toInt().coerceAtLeast(1)
+            val signatureHeight = (bounds.height() + padding * 2).toInt().coerceAtLeast(1)
 
-        // Translate to crop to signature bounds
-        canvas.translate(-bounds.left + padding, -bounds.top + padding)
+            val bitmap = Bitmap.createBitmap(signatureWidth, signatureHeight, Bitmap.Config.ARGB_8888)
+            try {
+                val canvas = Canvas(bitmap)
+                canvas.drawColor(Color.TRANSPARENT)
+                canvas.translate(-bounds.left + padding, -bounds.top + padding)
 
-        for ((path, paint) in paths) {
-            canvas.drawPath(path, paint)
+                for ((path, paint) in pathSnapshot) {
+                    canvas.drawPath(path, paint)
+                }
+
+                val tempDir = File(context.cacheDir, "neurosign")
+                if (!tempDir.exists()) tempDir.mkdirs()
+
+                val isPng = format.equals("png", ignoreCase = true)
+                val extension = if (isPng) "png" else "jpg"
+                val compressFormat = if (isPng) Bitmap.CompressFormat.PNG else Bitmap.CompressFormat.JPEG
+                val fileName = "${UUID.randomUUID()}_signature.$extension"
+                val file = File(tempDir, fileName)
+
+                FileOutputStream(file).use { fos ->
+                    bitmap.compress(compressFormat, quality, fos)
+                }
+
+                withContext(Dispatchers.Main) {
+                    onSignatureExported?.invoke("file://${file.absolutePath}")
+                }
+            } finally {
+                bitmap.recycle()
+            }
         }
-
-        // Save to temp
-        val tempDir = File(context.cacheDir, "neurosign")
-        if (!tempDir.exists()) tempDir.mkdirs()
-
-        val extension = if (format == "png") "png" else "png"
-        val fileName = "${UUID.randomUUID()}_signature.$extension"
-        val file = File(tempDir, fileName)
-
-        FileOutputStream(file).use { fos ->
-            bitmap.compress(Bitmap.CompressFormat.PNG, quality, fos)
-        }
-        bitmap.recycle()
-
-        onSignatureExported?.invoke("file://${file.absolutePath}")
     }
 
     // MARK: - Private Helpers

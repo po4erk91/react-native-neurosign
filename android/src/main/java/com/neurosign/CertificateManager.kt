@@ -45,7 +45,7 @@ object CertificateManager {
     data class SigningIdentity(
         val privateKey: PrivateKey,
         val certificate: X509Certificate,
-        val certificateChain: Array<X509Certificate>
+        val certificateChain: List<X509Certificate>
     )
 
     // MARK: - Import PKCS#12
@@ -221,7 +221,7 @@ object CertificateManager {
         return SigningIdentity(
             privateKey = privateKey,
             certificate = chain.first(),
-            certificateChain = chain.toTypedArray()
+            certificateChain = chain
         )
     }
 
@@ -237,14 +237,18 @@ object CertificateManager {
         val p12Alias = p12KeyStore.aliases().toList().firstOrNull()
             ?: throw IllegalStateException("No entries in .p12 file")
 
-        val privateKey = p12KeyStore.getKey(p12Alias, password.toCharArray()) as PrivateKey
+        val key = p12KeyStore.getKey(p12Alias, password.toCharArray())
+            ?: throw IllegalStateException("No key found in .p12 file for alias: $p12Alias")
+        val privateKey = key as? PrivateKey
+            ?: throw IllegalStateException("Key is not a PrivateKey (found ${key::class.simpleName})")
         val chain = p12KeyStore.getCertificateChain(p12Alias)
-            .map { it as X509Certificate }
+            ?.map { it as X509Certificate }
+            ?: throw IllegalStateException("No certificate chain found in .p12 file")
 
         return SigningIdentity(
             privateKey = privateKey,
             certificate = chain.first(),
-            certificateChain = chain.toTypedArray()
+            certificateChain = chain
         )
     }
 

@@ -116,11 +116,7 @@ public class NeurosignImpl: NSObject {
     public func addSignatureImage(
         pdfUrl: String,
         signatureImageUrl: String,
-        pageIndex: Int,
-        x: Double,
-        y: Double,
-        width: Double,
-        height: Double,
+        placements: [[String: Any]],
         resolver: @escaping RNResolver,
         rejecter: @escaping RNRejecter
     ) {
@@ -140,40 +136,32 @@ public class NeurosignImpl: NSObject {
 
             let totalPages = pdfDocument.numberOfPages
 
-            guard pageIndex >= 0, pageIndex < totalPages else {
-                rejecter("INVALID_INPUT", "pageIndex \(pageIndex) out of range (0..\(totalPages - 1))", nil)
+            // Build lookup: pageIndex -> placement
+            var placementMap = [Int: (x: Double, y: Double, width: Double, height: Double)]()
+            for p in placements {
+                guard let pi = p["pageIndex"] as? NSNumber,
+                      let px = p["x"] as? NSNumber,
+                      let py = p["y"] as? NSNumber,
+                      let pw = p["width"] as? NSNumber,
+                      let ph = p["height"] as? NSNumber else { continue }
+                let pageIdx = pi.intValue
+                guard pageIdx >= 0, pageIdx < totalPages else {
+                    rejecter("INVALID_INPUT", "pageIndex \(pageIdx) out of range (0..\(totalPages - 1))", nil)
+                    return
+                }
+                placementMap[pageIdx] = (x: px.doubleValue, y: py.doubleValue, width: pw.doubleValue, height: ph.doubleValue)
+            }
+
+            guard !placementMap.isEmpty else {
+                rejecter("INVALID_INPUT", "No valid placements provided", nil)
                 return
             }
 
             do {
                 let outputUrl = self.tempDirectory.appendingPathComponent(
-                    "\(UUID().uuidString)_signed.pdf"
+                    "\(UUID().uuidString)_visual.pdf"
                 )
-                let pdfData = NSMutableData()
 
-                guard let consumer = CGDataConsumer(data: pdfData as CFMutableData) else {
-                    rejecter("PDF_GENERATION_FAILED", "Cannot create PDF data consumer", nil)
-                    return
-                }
-
-                var mediaBox = CGRect.zero
-
-                for i in 1...totalPages {
-                    guard let page = pdfDocument.page(at: i) else { continue }
-                    mediaBox = page.getBoxRect(.mediaBox)
-
-                    var pageDict = [String: Any]() as CFDictionary
-                    guard let pdfContext = CGContext(consumer: consumer, mediaBox: &mediaBox, pageDict as CFDictionary) else {
-                        continue
-                    }
-
-                    // For the first page, create the context
-                    if i == 1 {
-                        // We'll use UIGraphicsPDFRenderer instead for simplicity
-                    }
-                }
-
-                // Re-render using UIGraphicsPDFRenderer approach
                 let firstPage = pdfDocument.page(at: 1)
                 let firstPageBox = firstPage?.getBoxRect(.mediaBox) ?? CGRect(x: 0, y: 0, width: 595.28, height: 841.89)
 
@@ -196,17 +184,17 @@ public class NeurosignImpl: NSObject {
                         cgContext.scaleBy(x: 1, y: -1)
                         cgContext.drawPDFPage(page)
 
-                        // Draw signature on the target page (pageIndex is 0-based, i is 1-based)
-                        if i - 1 == pageIndex {
+                        // Draw signature if this page has a placement (i is 1-based)
+                        if let placement = placementMap[i - 1] {
                             // Reset transform for drawing signature
                             cgContext.scaleBy(x: 1, y: -1)
                             cgContext.translateBy(x: 0, y: -pageBox.height)
 
                             let sigRect = CGRect(
-                                x: CGFloat(x) * pageBox.width,
-                                y: CGFloat(y) * pageBox.height,
-                                width: CGFloat(width) * pageBox.width,
-                                height: CGFloat(height) * pageBox.height
+                                x: CGFloat(placement.x) * pageBox.width,
+                                y: CGFloat(placement.y) * pageBox.height,
+                                width: CGFloat(placement.width) * pageBox.width,
+                                height: CGFloat(placement.height) * pageBox.height
                             )
                             signatureImage.draw(in: sigRect)
                         }

@@ -1,5 +1,6 @@
 import UIKit
 import PencilKit
+import React
 
 @objcMembers
 public class SignaturePadView: UIView {
@@ -23,9 +24,9 @@ public class SignaturePadView: UIView {
     public var minStrokeWidth: CGFloat = 1
     public var maxStrokeWidth: CGFloat = 5
 
-    // Callbacks
-    public var onDrawingChanged: ((_ hasDrawing: Bool) -> Void)?
-    public var onSignatureExported: ((_ imageUrl: String) -> Void)?
+    // Callbacks (RCTDirectEventBlock = NSDictionary? -> Void)
+    public var onDrawingChanged: RCTDirectEventBlock?
+    public var onSignatureExported: RCTDirectEventBlock?
 
     // MARK: - Init
 
@@ -44,6 +45,7 @@ public class SignaturePadView: UIView {
         canvasView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         canvasView.backgroundColor = .white
         canvasView.drawingPolicy = .anyInput
+        canvasView.overrideUserInterfaceStyle = .light
         canvasView.delegate = self
 
         updateTool()
@@ -62,7 +64,7 @@ public class SignaturePadView: UIView {
         drawingHistory.append(canvasView.drawing)
         canvasView.drawing = PKDrawing()
         redoStack.removeAll()
-        onDrawingChanged?(false)
+        onDrawingChanged?(["hasDrawing": false])
     }
 
     public func undo() {
@@ -83,14 +85,14 @@ public class SignaturePadView: UIView {
         redoDrawing.strokes.append(lastStroke)
         redoStack.append(redoDrawing)
 
-        onDrawingChanged?(!canvasView.drawing.strokes.isEmpty)
+        onDrawingChanged?(["hasDrawing": !canvasView.drawing.strokes.isEmpty])
     }
 
     public func redo() {
         guard let redoDrawing = redoStack.popLast() else { return }
         drawingHistory.append(canvasView.drawing)
         canvasView.drawing = redoDrawing
-        onDrawingChanged?(!canvasView.drawing.strokes.isEmpty)
+        onDrawingChanged?(["hasDrawing": !canvasView.drawing.strokes.isEmpty])
     }
 
     public func exportSignature(format: String, quality: Int) {
@@ -98,14 +100,20 @@ public class SignaturePadView: UIView {
         let bounds = drawing.bounds
 
         guard !bounds.isEmpty else {
-            onSignatureExported?("")
+            onSignatureExported?(["imageUrl": ""])
             return
         }
 
         // Render the drawing to an image with some padding
         let padding: CGFloat = 10
         let renderBounds = bounds.insetBy(dx: -padding, dy: -padding)
-        let image = drawing.image(from: renderBounds, scale: UIScreen.main.scale)
+
+        // Force light trait collection so strokes render in their original colors
+        let lightTraits = UITraitCollection(userInterfaceStyle: .light)
+        var image: UIImage!
+        lightTraits.performAsCurrent {
+            image = drawing.image(from: renderBounds, scale: UIScreen.main.scale)
+        }
 
         // Save to temp directory
         let tempDir = FileManager.default.temporaryDirectory
@@ -121,7 +129,7 @@ public class SignaturePadView: UIView {
             : image.jpegData(compressionQuality: compressionQuality)
         {
             try? data.write(to: fileUrl)
-            onSignatureExported?(fileUrl.absoluteString)
+            onSignatureExported?(["imageUrl": fileUrl.absoluteString])
         }
     }
 }
@@ -131,6 +139,6 @@ public class SignaturePadView: UIView {
 extension SignaturePadView: PKCanvasViewDelegate {
     public func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
         redoStack.removeAll()
-        onDrawingChanged?(!canvasView.drawing.strokes.isEmpty)
+        onDrawingChanged?(["hasDrawing": !canvasView.drawing.strokes.isEmpty])
     }
 }

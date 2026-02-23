@@ -9,6 +9,7 @@ import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
+import android.graphics.drawable.BitmapDrawable
 import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.os.ParcelFileDescriptor
@@ -57,6 +58,7 @@ class SignaturePlacementView(context: Context) : FrameLayout(context) {
     // PDF state
     private var pdfRenderer: PdfRenderer? = null
     private var pdfFileDescriptor: ParcelFileDescriptor? = null
+    private val tempFiles = mutableListOf<File>()
     private var currentPageIndex: Int = 0
     private var totalPageCount: Int = 0
 
@@ -434,6 +436,8 @@ class SignaturePlacementView(context: Context) : FrameLayout(context) {
         page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
         page.close()
 
+        // Recycle previous bitmap to prevent memory leak on page navigation
+        (pdfImageView.drawable as? BitmapDrawable)?.bitmap?.recycle()
         pdfImageView.setImageBitmap(bitmap)
         applyPdfLayout()
 
@@ -470,6 +474,8 @@ class SignaturePlacementView(context: Context) : FrameLayout(context) {
 
             val bitmap = BitmapFactory.decodeFile(file.absolutePath) ?: return
             sigAspectRatio = bitmap.width.toFloat() / bitmap.height.toFloat()
+            // Recycle previous signature bitmap
+            (signatureImageView.drawable as? BitmapDrawable)?.bitmap?.recycle()
             signatureImageView.setImageBitmap(bitmap)
 
             if (pdfDisplayRect.width() > 0) {
@@ -492,6 +498,7 @@ class SignaturePlacementView(context: Context) : FrameLayout(context) {
                 try {
                     val inputStream = context.contentResolver.openInputStream(Uri.parse(url)) ?: return null
                     val tempFile = File.createTempFile("neurosign_", ".tmp", context.cacheDir)
+                    tempFiles.add(tempFile)
                     tempFile.outputStream().use { out -> inputStream.copyTo(out) }
                     inputStream.close()
                     tempFile
@@ -506,5 +513,11 @@ class SignaturePlacementView(context: Context) : FrameLayout(context) {
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
         closePdf()
+        // Recycle bitmaps held by ImageViews
+        (pdfImageView.drawable as? BitmapDrawable)?.bitmap?.recycle()
+        (signatureImageView.drawable as? BitmapDrawable)?.bitmap?.recycle()
+        // Clean up temp files created from content:// URIs
+        tempFiles.forEach { it.delete() }
+        tempFiles.clear()
     }
 }

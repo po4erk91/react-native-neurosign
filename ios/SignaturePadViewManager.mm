@@ -18,23 +18,7 @@
 RCT_EXPORT_MODULE(SignaturePadView)
 
 - (UIView *)view {
-    SignaturePadView *view = [[SignaturePadView alloc] init];
-
-    __weak SignaturePadView *weakView = view;
-
-    view.onDrawingChanged = ^(BOOL hasDrawing) {
-        SignaturePadView *strongView = weakView;
-        if (!strongView) return;
-        // Event emission handled by Fabric
-    };
-
-    view.onSignatureExported = ^(NSString *imageUrl) {
-        SignaturePadView *strongView = weakView;
-        if (!strongView) return;
-        // Event emission handled by Fabric
-    };
-
-    return view;
+    return [[SignaturePadView alloc] init];
 }
 
 RCT_EXPORT_VIEW_PROPERTY(strokeColor, UIColor)

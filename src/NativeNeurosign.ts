@@ -51,10 +51,14 @@ export interface Spec extends TurboModule {
   }>;
 
   /**
-   * Overlay a signature image onto a specific page of a PDF document.
+   * Overlay a signature image onto one or more pages of a PDF document.
    * Returns a new file URL for the modified PDF.
    *
    * Coordinates are normalized (0-1 range relative to page dimensions).
+   *
+   * When `placements` array is provided, signatures are added to all
+   * specified pages. Otherwise falls back to single page via
+   * pageIndex/x/y/width/height fields.
    */
   addSignatureImage(options: {
     pdfUrl: string;
@@ -64,6 +68,13 @@ export interface Spec extends TurboModule {
     y: number;
     width: number;
     height: number;
+    placements?: Array<{
+      pageIndex: number;
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    }>;
   }): Promise<{
     pdfUrl: string;
   }>;
