@@ -13,10 +13,11 @@ Native PDF generation from images with PAdES digital signatures and signature pa
 - **PDF Generation** — create multi-page PDFs from images with configurable page size, margins, and quality
 - **Signature Drawing** — native signature pad powered by PencilKit (iOS) with pressure sensitivity, undo/redo
 - **Signature Placement** — interactive drag & pinch-to-resize overlay on PDF pages with multi-page support
-- **PAdES-B-B Digital Signatures** — sign PDFs with CMS/PKCS#7 containers conforming to PAdES baseline
+- **PAdES-B-B / PAdES-B-T Digital Signatures** — sign PDFs with CMS/PKCS#7 containers conforming to PAdES baseline, with optional RFC 3161 timestamping
 - **Certificate Management** — import `.p12`/`.pfx`, generate self-signed X.509 certificates, list & delete from keychain/keystore
 - **Signature Verification** — verify all digital signatures in a PDF document
 - **External Signing** — prepare hash for remote/server-side signing and embed the resulting CMS container
+- **No External PDF Libraries** — custom PDF structure parsing and generation, no heavy dependencies
 - **New Architecture** — built with TurboModules + Fabric (React Native 0.79+)
 
 ## Installation
@@ -144,28 +145,40 @@ const result = await Neurosign.addSignatureImage({
 
 #### `signPdf(options)`
 
-Apply a PAdES-B-B digital signature to a PDF.
+Apply a PAdES-B-B digital signature to a PDF. Optionally upgrade to PAdES-B-T with an RFC 3161 timestamp.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `pdfUrl` | `string` | Yes | PDF file URL |
-| `certificateType` | `string` | Yes | `"selfSigned"` or `"keychain"` |
+| `certificateType` | `string` | Yes | `"selfSigned"`, `"keychain"`, or `"p12"` |
 | `certificatePath` | `string` | No | Path to `.p12`/`.pfx` file |
 | `certificatePassword` | `string` | No | Password for the certificate file |
 | `keychainAlias` | `string` | No | Alias of certificate in keychain/keystore |
 | `reason` | `string` | No | Signing reason |
 | `location` | `string` | No | Signing location |
 | `contactInfo` | `string` | No | Signer contact info |
+| `tsaUrl` | `string` | No | RFC 3161 TSA URL for PAdES-B-T timestamping |
 
 **Returns:** `{ pdfUrl: string, signatureValid: boolean, signerName: string, signedAt: string }`
 
 ```ts
+// PAdES-B-B (no timestamp)
 const signed = await Neurosign.signPdf({
   pdfUrl: pdf.pdfUrl,
   certificateType: 'keychain',
   keychainAlias: 'my-cert',
   reason: 'Approval',
   location: 'Kyiv',
+});
+
+// PAdES-B-T (with RFC 3161 timestamp)
+const timestamped = await Neurosign.signPdf({
+  pdfUrl: pdf.pdfUrl,
+  certificateType: 'keychain',
+  keychainAlias: 'my-cert',
+  reason: 'Approval',
+  location: 'Kyiv',
+  tsaUrl: 'https://freetsa.org/tsr',
 });
 ```
 
@@ -511,7 +524,8 @@ try {
 ### iOS
 - Signature drawing uses **PencilKit** with full Apple Pencil pressure sensitivity
 - Certificate storage uses **iOS Keychain** via Security.framework
-- PDF signing uses **OpenSSL** (bundled via `OpenSSL-Universal` pod)
+- PDF signing uses hand-rolled **CMS/DER encoding** with Security.framework (no OpenSSL dependency)
+- Self-signed certificates built via custom X.509 DER encoder
 - Minimum deployment target: **iOS 16.0**
 
 ### Android
@@ -519,6 +533,25 @@ try {
 - Certificate storage uses **Android KeyStore**
 - PDF signing uses **BouncyCastle** (`bcprov-jdk18on`, `bcpkix-jdk18on`)
 - Minimum SDK: **24** (Android 7.0)
+
+## Testing
+
+The library includes comprehensive test suites for both platforms:
+
+- **iOS:** 63 XCTests covering DER encoding, PDF parsing, signing/verification roundtrips, external signing, and certificate generation
+- **Android:** 48 JUnit tests covering PDF parsing, CMS building, signing/verification roundtrips, external signing, and PDF generation
+
+```bash
+# Run iOS tests
+cd example/ios
+xcodebuild test -workspace NeurosignExample.xcworkspace -scheme NeurosignExample \
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+  -only-testing NeurosignTests CODE_SIGNING_ALLOWED=NO
+
+# Run Android tests
+cd example/android
+./gradlew :react-native-neurosign:testDebugUnitTest
+```
 
 ## License
 
