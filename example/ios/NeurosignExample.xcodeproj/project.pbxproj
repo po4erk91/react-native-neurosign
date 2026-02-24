@@ -11,6 +11,7 @@
 		13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB51A68108700A75B9A /* Images.xcassets */; };
 		28FD9E7B696C69E2CCAA248F /* PdfSignerHelperTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06516933556D555DD70199F0 /* PdfSignerHelperTests.swift */; };
 		2C4B14CE0D8EB4D84109EC3C /* TestPdfBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C0CAE61D9E7EC60FC9F435A /* TestPdfBuilder.swift */; };
+		3C430B9787972B2C55FBA3B8 /* TestSigningHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EA81CD09838BE089B2AF615 /* TestSigningHelper.swift */; };
 		4325731CE42251D29C398288 /* CertificateManagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 677592CD77035B5746472293 /* CertificateManagerTests.swift */; };
 		761780ED2CA45674006654EE /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 761780EC2CA45674006654EE /* AppDelegate.swift */; };
 		81AB9BB82411601600AC10FF /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */; };
@@ -48,6 +49,7 @@
 		5709B34CF0A7D63546082F79 /* Pods-NeurosignExample.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-NeurosignExample.release.xcconfig"; path = "Target Support Files/Pods-NeurosignExample/Pods-NeurosignExample.release.xcconfig"; sourceTree = "<group>"; };
 		5B03244FB8BCB10254B1CA98 /* NeurosignTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NeurosignTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		5DCACB8F33CDC322A6C60F78 /* libPods-NeurosignExample.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-NeurosignExample.a"; sourceTree = BUILT_PRODUCTS_DIR; };
+		5EA81CD09838BE089B2AF615 /* TestSigningHelper.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TestSigningHelper.swift; sourceTree = "<group>"; };
 		677592CD77035B5746472293 /* CertificateManagerTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CertificateManagerTests.swift; sourceTree = "<group>"; };
 		761780EC2CA45674006654EE /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = NeurosignExample/AppDelegate.swift; sourceTree = "<group>"; };
 		7F65A334F551F17EC609E6FF /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
@@ -165,6 +167,7 @@
 				06516933556D555DD70199F0 /* PdfSignerHelperTests.swift */,
 				296A2B39CC63DCEF3465DBE6 /* ExternalSigningIntegrationTests.swift */,
 				C28EC60C0EC5E51C6590ABE7 /* SignAndVerifyIntegrationTests.swift */,
+				5EA81CD09838BE089B2AF615 /* TestSigningHelper.swift */,
 			);
 			name = NeurosignTests;
 			path = NeurosignTests;
@@ -383,6 +386,7 @@
 				28FD9E7B696C69E2CCAA248F /* PdfSignerHelperTests.swift in Sources */,
 				FE23880EEAE6CF076CBBB04A /* ExternalSigningIntegrationTests.swift in Sources */,
 				CD7397E84819A40FE8F41D1E /* SignAndVerifyIntegrationTests.swift in Sources */,
+				3C430B9787972B2C55FBA3B8 /* TestSigningHelper.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

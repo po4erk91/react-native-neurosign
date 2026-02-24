@@ -234,6 +234,6 @@ jobs:
           xcodebuild test \
             -workspace NeurosignExample.xcworkspace \
             -scheme NeurosignExample \
-            -destination 'platform=iOS Simulator,name=iPhone 16 Pro' \
+            -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
             -only-testing NeurosignTests \
             CODE_SIGNING_ALLOWED=NO

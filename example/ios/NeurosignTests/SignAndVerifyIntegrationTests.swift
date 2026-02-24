@@ -3,17 +3,14 @@ import XCTest
 
 final class SignAndVerifyIntegrationTests: XCTestCase {
 
-    private var testAlias: String!
     private var tempFiles: [URL] = []
 
     override func setUp() {
         super.setUp()
-        testAlias = "test_sign_\(UUID().uuidString.prefix(8))"
         tempFiles = []
     }
 
     override func tearDown() {
-        _ = try? CertificateManager.deleteCertificate(alias: testAlias)
         tempFiles.forEach { TestPdfBuilder.cleanup($0) }
         super.tearDown()
     }
@@ -26,15 +23,7 @@ final class SignAndVerifyIntegrationTests: XCTestCase {
     // MARK: - Sign + Verify Roundtrip
 
     func test_signAndVerify_selfSignedRSA() throws {
-        _ = try CertificateManager.generateSelfSigned(
-            commonName: "Test RSA",
-            organization: "Test",
-            country: "US",
-            validityDays: 1,
-            alias: testAlias,
-            keyAlgorithm: "RSA"
-        )
-        let identity = try CertificateManager.getSigningIdentity(alias: testAlias)
+        let identity = try TestSigningHelper.generateRSAIdentity()
 
         let pdfData = TestPdfBuilder.minimalPdf()
         let inputUrl = addTemp(TestPdfBuilder.writeTempFile(pdfData, name: "input.pdf"))
@@ -56,15 +45,7 @@ final class SignAndVerifyIntegrationTests: XCTestCase {
     }
 
     func test_signAndVerify_selfSignedEC() throws {
-        _ = try CertificateManager.generateSelfSigned(
-            commonName: "Test EC",
-            organization: "Test",
-            country: "US",
-            validityDays: 1,
-            alias: testAlias,
-            keyAlgorithm: "EC"
-        )
-        let identity = try CertificateManager.getSigningIdentity(alias: testAlias)
+        let identity = try TestSigningHelper.generateECIdentity()
 
         let pdfData = TestPdfBuilder.minimalPdf()
         let inputUrl = addTemp(TestPdfBuilder.writeTempFile(pdfData, name: "input_ec.pdf"))
@@ -85,14 +66,7 @@ final class SignAndVerifyIntegrationTests: XCTestCase {
     }
 
     func test_signAndVerify_tamperedPdf() throws {
-        _ = try CertificateManager.generateSelfSigned(
-            commonName: "Test Tamper",
-            organization: "",
-            country: "",
-            validityDays: 1,
-            alias: testAlias
-        )
-        let identity = try CertificateManager.getSigningIdentity(alias: testAlias)
+        let identity = try TestSigningHelper.generateRSAIdentity()
 
         let pdfData = TestPdfBuilder.minimalPdf()
         let inputUrl = addTemp(TestPdfBuilder.writeTempFile(pdfData, name: "input_tamper.pdf"))
@@ -120,14 +94,7 @@ final class SignAndVerifyIntegrationTests: XCTestCase {
     }
 
     func test_byteRange_coversAngleBrackets() throws {
-        _ = try CertificateManager.generateSelfSigned(
-            commonName: "Test ByteRange",
-            organization: "",
-            country: "",
-            validityDays: 1,
-            alias: testAlias
-        )
-        let identity = try CertificateManager.getSigningIdentity(alias: testAlias)
+        let identity = try TestSigningHelper.generateRSAIdentity()
 
         let pdfData = TestPdfBuilder.minimalPdf()
         let inputUrl = addTemp(TestPdfBuilder.writeTempFile(pdfData, name: "input_br.pdf"))
@@ -145,7 +112,6 @@ final class SignAndVerifyIntegrationTests: XCTestCase {
         let signedData = try Data(contentsOf: outputUrl)
         let signedText = String(data: signedData, encoding: .isoLatin1)!
 
-        // Find the ByteRange in the signed PDF
         let sigs = PdfSigner.findSignatureDictionaries(in: signedText)
         XCTAssertEqual(sigs.count, 1)
 
@@ -154,42 +120,30 @@ final class SignAndVerifyIntegrationTests: XCTestCase {
             return
         }
 
-        // The gap starts at br.1 (gapStart) and ends at br.2 (gapEnd)
-        // Per PDF spec: the gap must cover <hex_digits> including angle brackets
         let gapStart = br.1
         let gapEnd = br.2
 
         XCTAssertTrue(gapStart < signedData.count)
         XCTAssertTrue(gapEnd <= signedData.count)
 
-        // First byte of gap should be '<', last byte before gapEnd should be '>'
         XCTAssertEqual(signedData[gapStart], UInt8(ascii: "<"), "Gap should start with '<'")
         XCTAssertEqual(signedData[gapEnd - 1], UInt8(ascii: ">"), "Gap should end with '>'")
     }
 
     func test_signTwice_createsUniqueFieldNames() throws {
-        _ = try CertificateManager.generateSelfSigned(
-            commonName: "Test Double",
-            organization: "",
-            country: "",
-            validityDays: 1,
-            alias: testAlias
-        )
-        let identity = try CertificateManager.getSigningIdentity(alias: testAlias)
+        let identity = try TestSigningHelper.generateRSAIdentity()
 
         let pdfData = TestPdfBuilder.minimalPdf()
         let inputUrl = addTemp(TestPdfBuilder.writeTempFile(pdfData, name: "input_double.pdf"))
         let firstUrl = addTemp(TestPdfBuilder.writeTempFile(Data(), name: "first.pdf"))
         let secondUrl = addTemp(TestPdfBuilder.writeTempFile(Data(), name: "second.pdf"))
 
-        // First signature
         try PdfSigner.signPdf(
             pdfUrl: inputUrl, identity: identity,
             reason: "First", location: "", contactInfo: "",
             outputUrl: firstUrl
         )
 
-        // Second signature on top of the first
         try PdfSigner.signPdf(
             pdfUrl: firstUrl, identity: identity,
             reason: "Second", location: "", contactInfo: "",
@@ -200,27 +154,18 @@ final class SignAndVerifyIntegrationTests: XCTestCase {
         XCTAssertEqual(sigs.count, 2)
     }
 
-    func test_signPdf_invalidPdf() {
+    func test_signPdf_invalidPdf() throws {
+        let identity = try TestSigningHelper.generateRSAIdentity()
+
         let garbage = Data("Not a PDF".utf8)
         let inputUrl = addTemp(TestPdfBuilder.writeTempFile(garbage, name: "garbage.pdf"))
         let outputUrl = addTemp(TestPdfBuilder.writeTempFile(Data(), name: "output.pdf"))
 
-        // Need a dummy identity — generate one
-        do {
-            _ = try CertificateManager.generateSelfSigned(
-                commonName: "Test", organization: "", country: "",
-                validityDays: 1, alias: testAlias
-            )
-            let identity = try CertificateManager.getSigningIdentity(alias: testAlias)
-
-            XCTAssertThrowsError(try PdfSigner.signPdf(
-                pdfUrl: inputUrl, identity: identity,
-                reason: "", location: "", contactInfo: "",
-                outputUrl: outputUrl
-            ))
-        } catch {
-            XCTFail("Setup failed: \(error)")
-        }
+        XCTAssertThrowsError(try PdfSigner.signPdf(
+            pdfUrl: inputUrl, identity: identity,
+            reason: "", location: "", contactInfo: "",
+            outputUrl: outputUrl
+        ))
     }
 
     func test_verifySignatures_unsignedPdf() throws {

@@ -723,7 +723,7 @@ public class CertificateManager: NSObject {
 
     // MARK: - Private: Build Self-Signed Certificate DER
 
-    private static func buildSelfSignedCertificateDER(
+    static func buildSelfSignedCertificateDER(
         privateKey: SecKey,
         publicKey: SecKey,
         commonName: String,

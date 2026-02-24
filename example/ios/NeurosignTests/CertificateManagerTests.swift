@@ -1,98 +1,95 @@
 import XCTest
 @testable import Neurosign
 
+/// Tests certificate generation logic without Keychain access.
+/// Uses TestSigningHelper to create ephemeral keys (no entitlements needed).
 final class CertificateManagerTests: XCTestCase {
 
-    private var testAlias: String!
+    // MARK: - Ephemeral identity generation (RSA)
 
-    override func setUp() {
-        super.setUp()
-        testAlias = "test_cert_\(UUID().uuidString.prefix(8))"
-    }
+    func test_generateEphemeralIdentity_RSA() throws {
+        let identity = try TestSigningHelper.generateRSAIdentity()
 
-    override func tearDown() {
-        _ = try? CertificateManager.deleteCertificate(alias: testAlias)
-        super.tearDown()
-    }
-
-    // MARK: - generateSelfSigned
-
-    func test_generateSelfSigned_RSA() throws {
-        let info = try CertificateManager.generateSelfSigned(
-            commonName: "Test RSA Cert",
-            organization: "TestOrg",
-            country: "US",
-            validityDays: 1,
-            alias: testAlias,
-            keyAlgorithm: "RSA"
-        )
-
-        XCTAssertEqual(info.alias, testAlias)
-        XCTAssertFalse(info.subject.isEmpty)
-        XCTAssertFalse(info.serialNumber.isEmpty)
-    }
-
-    func test_generateSelfSigned_EC() throws {
-        let info = try CertificateManager.generateSelfSigned(
-            commonName: "Test EC Cert",
-            organization: "TestOrg",
-            country: "US",
-            validityDays: 1,
-            alias: testAlias,
-            keyAlgorithm: "EC"
-        )
-
-        XCTAssertEqual(info.alias, testAlias)
-        XCTAssertFalse(info.subject.isEmpty)
-    }
-
-    // MARK: - getSigningIdentity
-
-    func test_getSigningIdentity_afterGenerate() throws {
-        _ = try CertificateManager.generateSelfSigned(
-            commonName: "Test Identity",
-            organization: "",
-            country: "",
-            validityDays: 1,
-            alias: testAlias
-        )
-
-        let identity = try CertificateManager.getSigningIdentity(alias: testAlias)
-        XCTAssertFalse(identity.certificateChain.isEmpty)
         XCTAssertFalse(identity.certificateData.isEmpty)
+        XCTAssertFalse(identity.certificateChain.isEmpty)
+
+        // Certificate DER should start with SEQUENCE tag (0x30)
+        XCTAssertEqual(identity.certificateData[0], 0x30)
     }
 
-    // MARK: - listCertificates
+    // MARK: - Ephemeral identity generation (EC)
 
-    func test_listCertificates_includesGenerated() throws {
-        _ = try CertificateManager.generateSelfSigned(
-            commonName: "Test List",
-            organization: "",
-            country: "",
-            validityDays: 1,
-            alias: testAlias
+    func test_generateEphemeralIdentity_EC() throws {
+        let identity = try TestSigningHelper.generateECIdentity()
+
+        XCTAssertFalse(identity.certificateData.isEmpty)
+        XCTAssertFalse(identity.certificateChain.isEmpty)
+        XCTAssertEqual(identity.certificateData[0], 0x30)
+    }
+
+    // MARK: - Certificate DER structure
+
+    func test_buildSelfSignedCertificateDER_RSA_isValidCert() throws {
+        let keyParams: [String: Any] = [
+            kSecAttrKeyType as String: kSecAttrKeyTypeRSA,
+            kSecAttrKeySizeInBits as String: 2048,
+        ]
+        var error: Unmanaged<CFError>?
+        let privateKey = SecKeyCreateRandomKey(keyParams as CFDictionary, &error)!
+        if error != nil { _ = error!.takeRetainedValue() }
+        let publicKey = SecKeyCopyPublicKey(privateKey)!
+
+        let now = Date()
+        let expiry = Calendar.current.date(byAdding: .day, value: 1, to: now)!
+
+        let certData = try CertificateManager.buildSelfSignedCertificateDER(
+            privateKey: privateKey,
+            publicKey: publicKey,
+            commonName: "Test DER RSA",
+            organization: "TestOrg",
+            country: "US",
+            notBefore: now,
+            notAfter: expiry,
+            isEC: false
         )
 
-        let certs = CertificateManager.listCertificates()
-        let found = certs.contains { $0.alias == testAlias }
-        XCTAssertTrue(found, "Generated cert should appear in list")
+        // Should be parseable as SecCertificate
+        let cert = SecCertificateCreateWithData(nil, certData as CFData)
+        XCTAssertNotNil(cert, "DER data should create a valid SecCertificate")
+
+        // Subject summary should contain the CN
+        if let cert = cert {
+            let summary = SecCertificateCopySubjectSummary(cert) as String?
+            XCTAssertEqual(summary, "Test DER RSA")
+        }
     }
 
-    // MARK: - deleteCertificate
+    func test_buildSelfSignedCertificateDER_EC_isValidCert() throws {
+        let keyParams: [String: Any] = [
+            kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
+            kSecAttrKeySizeInBits as String: 256,
+        ]
+        var error: Unmanaged<CFError>?
+        let privateKey = SecKeyCreateRandomKey(keyParams as CFDictionary, &error)!
+        if error != nil { _ = error!.takeRetainedValue() }
+        let publicKey = SecKeyCopyPublicKey(privateKey)!
 
-    func test_deleteCertificate_removesFromKeychain() throws {
-        _ = try CertificateManager.generateSelfSigned(
-            commonName: "Test Delete",
+        let now = Date()
+        let expiry = Calendar.current.date(byAdding: .day, value: 1, to: now)!
+
+        let certData = try CertificateManager.buildSelfSignedCertificateDER(
+            privateKey: privateKey,
+            publicKey: publicKey,
+            commonName: "Test DER EC",
             organization: "",
             country: "",
-            validityDays: 1,
-            alias: testAlias
+            notBefore: now,
+            notAfter: expiry,
+            isEC: true
         )
 
-        let deleted = try CertificateManager.deleteCertificate(alias: testAlias)
-        XCTAssertTrue(deleted)
-
-        // After deletion, getSigningIdentity should throw
-        XCTAssertThrowsError(try CertificateManager.getSigningIdentity(alias: testAlias))
+        let cert = SecCertificateCreateWithData(nil, certData as CFData)
+        XCTAssertNotNil(cert, "EC DER data should create a valid SecCertificate")
     }
+
 }

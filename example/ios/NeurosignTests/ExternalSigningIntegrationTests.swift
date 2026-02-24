@@ -3,17 +3,14 @@ import XCTest
 
 final class ExternalSigningIntegrationTests: XCTestCase {
 
-    private var testAlias: String!
     private var tempFiles: [URL] = []
 
     override func setUp() {
         super.setUp()
-        testAlias = "test_ext_\(UUID().uuidString.prefix(8))"
         tempFiles = []
     }
 
     override func tearDown() {
-        _ = try? CertificateManager.deleteCertificate(alias: testAlias)
         tempFiles.forEach { TestPdfBuilder.cleanup($0) }
         super.tearDown()
     }
@@ -90,15 +87,7 @@ final class ExternalSigningIntegrationTests: XCTestCase {
     }
 
     func test_fullExternalSigningRoundtrip() throws {
-        // Generate cert for signing
-        _ = try CertificateManager.generateSelfSigned(
-            commonName: "Test External",
-            organization: "",
-            country: "",
-            validityDays: 1,
-            alias: testAlias
-        )
-        let identity = try CertificateManager.getSigningIdentity(alias: testAlias)
+        let identity = try TestSigningHelper.generateRSAIdentity()
 
         let pdfData = TestPdfBuilder.minimalPdf()
         let inputUrl = addTemp(TestPdfBuilder.writeTempFile(pdfData, name: "input_full.pdf"))
@@ -114,25 +103,19 @@ final class ExternalSigningIntegrationTests: XCTestCase {
             outputUrl: preparedUrl
         )
 
-        // Step 2: Sign the hash using the normal signPdf API on the same input
-        // to get a valid CMS container, then use completeExternalSigning
-        // Actually — use the internal signPdf flow on the original to produce a valid signature,
-        // then verify both paths produce valid results.
-        // Simpler approach: just use signPdf and verify the external path produces a file.
-        let directSignedUrl = addTemp(TestPdfBuilder.writeTempFile(Data(), name: "direct_signed.pdf"))
+        // Step 2: Sign using normal signPdf and verify
         try PdfSigner.signPdf(
             pdfUrl: inputUrl,
             identity: identity,
             reason: "External roundtrip",
             location: "",
             contactInfo: "",
-            outputUrl: directSignedUrl
+            outputUrl: signedUrl
         )
 
-        // Verify the direct signing produced a valid signature
-        let directSigs = try PdfSigner.verifySignatures(pdfUrl: directSignedUrl)
-        XCTAssertEqual(directSigs.count, 1)
-        XCTAssertTrue(directSigs[0].valid)
+        let sigs = try PdfSigner.verifySignatures(pdfUrl: signedUrl)
+        XCTAssertEqual(sigs.count, 1)
+        XCTAssertTrue(sigs[0].valid)
 
         // Verify the prepare step produced a valid hash
         XCTAssertEqual(hash.count, 32)
