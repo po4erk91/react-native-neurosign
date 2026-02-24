@@ -222,10 +222,17 @@ jobs:
           bundler-cache: true
           working-directory: example
 
+      - name: Cache CocoaPods
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: example/ios/Pods
+          key: ${{ runner.os }}-pods-${{ hashFiles('example/ios/Podfile.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-pods-
+
       - name: Install cocoapods
         run: |
           cd example
-          bundle exec pod repo update --verbose
           bundle exec pod install --project-directory=ios
 
       - name: Run iOS tests
