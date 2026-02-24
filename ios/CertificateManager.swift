@@ -149,6 +149,7 @@ public class CertificateManager: NSObject {
                 NSLocalizedDescriptionKey: "Failed to generate key pair"
             ])
         }
+        if error != nil { _ = error!.takeRetainedValue() }
 
         guard let publicKey = SecKeyCopyPublicKey(privateKey) else {
             throw NSError(domain: "Neurosign", code: 11, userInfo: [
@@ -813,6 +814,7 @@ public class CertificateManager: NSObject {
                 NSLocalizedDescriptionKey: "Failed to sign TBS certificate"
             ])
         }
+        if signError != nil { _ = signError!.takeRetainedValue() }
 
         der.append(contentsOf: tbsSequence)
         der.append(contentsOf: sigAlgoBytes)

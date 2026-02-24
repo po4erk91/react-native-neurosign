@@ -9,21 +9,54 @@
 /* Begin PBXBuildFile section */
 		0C80B921A6F3F58F76C31292 /* libPods-NeurosignExample.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 5DCACB8F33CDC322A6C60F78 /* libPods-NeurosignExample.a */; };
 		13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB51A68108700A75B9A /* Images.xcassets */; };
+		28FD9E7B696C69E2CCAA248F /* PdfSignerHelperTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06516933556D555DD70199F0 /* PdfSignerHelperTests.swift */; };
+		2C4B14CE0D8EB4D84109EC3C /* TestPdfBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C0CAE61D9E7EC60FC9F435A /* TestPdfBuilder.swift */; };
+		4325731CE42251D29C398288 /* CertificateManagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 677592CD77035B5746472293 /* CertificateManagerTests.swift */; };
 		761780ED2CA45674006654EE /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 761780EC2CA45674006654EE /* AppDelegate.swift */; };
 		81AB9BB82411601600AC10FF /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */; };
+		83AE652D8B89CBAC9701C20B /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7F65A334F551F17EC609E6FF /* Foundation.framework */; };
 		9EC43C810EEDA13B2DC87063 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */; };
+		A139A198B8EEA5514123436B /* CMSBuilderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA7FC5636BB016E66CC43A2A /* CMSBuilderTests.swift */; };
+		A67FD21372AB5400A2B8DAC9 /* PdfParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6BCA71A639460CA50AC8EE0 /* PdfParsingTests.swift */; };
+		CD7397E84819A40FE8F41D1E /* SignAndVerifyIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C28EC60C0EC5E51C6590ABE7 /* SignAndVerifyIntegrationTests.swift */; };
+		CDBE125EFCE888B1AE617C48 /* SignatureVerificationParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0CA50AEE502F9532FD68BF0 /* SignatureVerificationParsingTests.swift */; };
+		F54146EB7566484C0EE86858 /* libPods-NeurosignTests.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 048B9F2694AA90B77E9F0EF7 /* libPods-NeurosignTests.a */; };
+		FE23880EEAE6CF076CBBB04A /* ExternalSigningIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 296A2B39CC63DCEF3465DBE6 /* ExternalSigningIntegrationTests.swift */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		3A08ED6E9994BF6BD240374E /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 83CBB9F71A601CBA00E9B192 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 13B07F861A680F5B00A75B9A;
+			remoteInfo = NeurosignExample;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
+		048B9F2694AA90B77E9F0EF7 /* libPods-NeurosignTests.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-NeurosignTests.a"; sourceTree = BUILT_PRODUCTS_DIR; };
+		06516933556D555DD70199F0 /* PdfSignerHelperTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PdfSignerHelperTests.swift; sourceTree = "<group>"; };
 		13B07F961A680F5B00A75B9A /* NeurosignExample.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = NeurosignExample.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		13B07FB51A68108700A75B9A /* Images.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Images.xcassets; path = NeurosignExample/Images.xcassets; sourceTree = "<group>"; };
 		13B07FB61A68108700A75B9A /* Info.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = Info.plist; path = NeurosignExample/Info.plist; sourceTree = "<group>"; };
 		13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = PrivacyInfo.xcprivacy; path = NeurosignExample/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		296A2B39CC63DCEF3465DBE6 /* ExternalSigningIntegrationTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ExternalSigningIntegrationTests.swift; sourceTree = "<group>"; };
 		3B4392A12AC88292D35C810B /* Pods-NeurosignExample.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-NeurosignExample.debug.xcconfig"; path = "Target Support Files/Pods-NeurosignExample/Pods-NeurosignExample.debug.xcconfig"; sourceTree = "<group>"; };
+		4C0CAE61D9E7EC60FC9F435A /* TestPdfBuilder.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TestPdfBuilder.swift; sourceTree = "<group>"; };
+		50E485DDB207B30B6D768B5F /* Pods-NeurosignTests.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-NeurosignTests.release.xcconfig"; path = "Target Support Files/Pods-NeurosignTests/Pods-NeurosignTests.release.xcconfig"; sourceTree = "<group>"; };
 		5709B34CF0A7D63546082F79 /* Pods-NeurosignExample.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-NeurosignExample.release.xcconfig"; path = "Target Support Files/Pods-NeurosignExample/Pods-NeurosignExample.release.xcconfig"; sourceTree = "<group>"; };
+		5B03244FB8BCB10254B1CA98 /* NeurosignTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NeurosignTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		5DCACB8F33CDC322A6C60F78 /* libPods-NeurosignExample.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-NeurosignExample.a"; sourceTree = BUILT_PRODUCTS_DIR; };
+		677592CD77035B5746472293 /* CertificateManagerTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CertificateManagerTests.swift; sourceTree = "<group>"; };
 		761780EC2CA45674006654EE /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = NeurosignExample/AppDelegate.swift; sourceTree = "<group>"; };
+		7F65A334F551F17EC609E6FF /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
 		81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = LaunchScreen.storyboard; path = NeurosignExample/LaunchScreen.storyboard; sourceTree = "<group>"; };
+		BA7FC5636BB016E66CC43A2A /* CMSBuilderTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CMSBuilderTests.swift; sourceTree = "<group>"; };
+		C28EC60C0EC5E51C6590ABE7 /* SignAndVerifyIntegrationTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SignAndVerifyIntegrationTests.swift; sourceTree = "<group>"; };
+		D0CA50AEE502F9532FD68BF0 /* SignatureVerificationParsingTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SignatureVerificationParsingTests.swift; sourceTree = "<group>"; };
+		D6BCA71A639460CA50AC8EE0 /* PdfParsingTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PdfParsingTests.swift; sourceTree = "<group>"; };
+		D8E2190AC7CDDE66500A395D /* Pods-NeurosignTests.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-NeurosignTests.debug.xcconfig"; path = "Target Support Files/Pods-NeurosignTests/Pods-NeurosignTests.debug.xcconfig"; sourceTree = "<group>"; };
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
@@ -33,6 +66,15 @@
 			buildActionMask = 2147483647;
 			files = (
 				0C80B921A6F3F58F76C31292 /* libPods-NeurosignExample.a in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		36647D280E4C1D8090B40A5B /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				83AE652D8B89CBAC9701C20B /* Foundation.framework in Frameworks */,
+				F54146EB7566484C0EE86858 /* libPods-NeurosignTests.a in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -56,6 +98,8 @@
 			children = (
 				ED297162215061F000B7C4FE /* JavaScriptCore.framework */,
 				5DCACB8F33CDC322A6C60F78 /* libPods-NeurosignExample.a */,
+				9A181D78D78E883F83BC0006 /* iOS */,
+				048B9F2694AA90B77E9F0EF7 /* libPods-NeurosignTests.a */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -75,6 +119,7 @@
 				83CBBA001A601CBA00E9B192 /* Products */,
 				2D16E6871FA4F8E400B85C8A /* Frameworks */,
 				BBD78D7AC51CEA395F1C20DB /* Pods */,
+				C47AB55F0856C7699C72A003 /* NeurosignTests */,
 			);
 			indentWidth = 2;
 			sourceTree = "<group>";
@@ -85,8 +130,17 @@
 			isa = PBXGroup;
 			children = (
 				13B07F961A680F5B00A75B9A /* NeurosignExample.app */,
+				5B03244FB8BCB10254B1CA98 /* NeurosignTests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		9A181D78D78E883F83BC0006 /* iOS */ = {
+			isa = PBXGroup;
+			children = (
+				7F65A334F551F17EC609E6FF /* Foundation.framework */,
+			);
+			name = iOS;
 			sourceTree = "<group>";
 		};
 		BBD78D7AC51CEA395F1C20DB /* Pods */ = {
@@ -94,8 +148,26 @@
 			children = (
 				3B4392A12AC88292D35C810B /* Pods-NeurosignExample.debug.xcconfig */,
 				5709B34CF0A7D63546082F79 /* Pods-NeurosignExample.release.xcconfig */,
+				50E485DDB207B30B6D768B5F /* Pods-NeurosignTests.release.xcconfig */,
+				D8E2190AC7CDDE66500A395D /* Pods-NeurosignTests.debug.xcconfig */,
 			);
 			path = Pods;
+			sourceTree = "<group>";
+		};
+		C47AB55F0856C7699C72A003 /* NeurosignTests */ = {
+			isa = PBXGroup;
+			children = (
+				D0CA50AEE502F9532FD68BF0 /* SignatureVerificationParsingTests.swift */,
+				677592CD77035B5746472293 /* CertificateManagerTests.swift */,
+				BA7FC5636BB016E66CC43A2A /* CMSBuilderTests.swift */,
+				D6BCA71A639460CA50AC8EE0 /* PdfParsingTests.swift */,
+				4C0CAE61D9E7EC60FC9F435A /* TestPdfBuilder.swift */,
+				06516933556D555DD70199F0 /* PdfSignerHelperTests.swift */,
+				296A2B39CC63DCEF3465DBE6 /* ExternalSigningIntegrationTests.swift */,
+				C28EC60C0EC5E51C6590ABE7 /* SignAndVerifyIntegrationTests.swift */,
+			);
+			name = NeurosignTests;
+			path = NeurosignTests;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -121,6 +193,25 @@
 			productName = NeurosignExample;
 			productReference = 13B07F961A680F5B00A75B9A /* NeurosignExample.app */;
 			productType = "com.apple.product-type.application";
+		};
+		1A3B334E475D8C38BA5D07F2 /* NeurosignTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E4E2E316EF537E52974DC020 /* Build configuration list for PBXNativeTarget "NeurosignTests" */;
+			buildPhases = (
+				B33CFB420041E3E336B29FDC /* [CP] Check Pods Manifest.lock */,
+				4699603F0F6B3DB304B46E65 /* Sources */,
+				36647D280E4C1D8090B40A5B /* Frameworks */,
+				5F2883A49EDC898E370BAA25 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				398711E00440E2587E31477F /* PBXTargetDependency */,
+			);
+			name = NeurosignTests;
+			productName = NeurosignTests;
+			productReference = 5B03244FB8BCB10254B1CA98 /* NeurosignTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
 		};
 /* End PBXNativeTarget section */
 
@@ -149,6 +240,7 @@
 			projectRoot = "";
 			targets = (
 				13B07F861A680F5B00A75B9A /* NeurosignExample */,
+				1A3B334E475D8C38BA5D07F2 /* NeurosignTests */,
 			);
 		};
 /* End PBXProject section */
@@ -161,6 +253,13 @@
 				81AB9BB82411601600AC10FF /* LaunchScreen.storyboard in Resources */,
 				13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */,
 				9EC43C810EEDA13B2DC87063 /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5F2883A49EDC898E370BAA25 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -198,6 +297,28 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-NeurosignExample/Pods-NeurosignExample-frameworks.sh\"\n";
+			showEnvVarsInLog = 0;
+		};
+		B33CFB420041E3E336B29FDC /* [CP] Check Pods Manifest.lock */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"${PODS_PODFILE_DIR_PATH}/Podfile.lock",
+				"${PODS_ROOT}/Manifest.lock",
+			);
+			name = "[CP] Check Pods Manifest.lock";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/Pods-NeurosignTests-checkManifestLockResult.txt",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
 			showEnvVarsInLog = 0;
 		};
 		C38B50BA6285516D6DCD4F65 /* [CP] Check Pods Manifest.lock */ = {
@@ -250,7 +371,31 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		4699603F0F6B3DB304B46E65 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				CDBE125EFCE888B1AE617C48 /* SignatureVerificationParsingTests.swift in Sources */,
+				4325731CE42251D29C398288 /* CertificateManagerTests.swift in Sources */,
+				A139A198B8EEA5514123436B /* CMSBuilderTests.swift in Sources */,
+				A67FD21372AB5400A2B8DAC9 /* PdfParsingTests.swift in Sources */,
+				2C4B14CE0D8EB4D84109EC3C /* TestPdfBuilder.swift in Sources */,
+				28FD9E7B696C69E2CCAA248F /* PdfSignerHelperTests.swift in Sources */,
+				FE23880EEAE6CF076CBBB04A /* ExternalSigningIntegrationTests.swift in Sources */,
+				CD7397E84819A40FE8F41D1E /* SignAndVerifyIntegrationTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		398711E00440E2587E31477F /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = NeurosignExample;
+			target = 13B07F861A680F5B00A75B9A /* NeurosignExample */;
+			targetProxy = 3A08ED6E9994BF6BD240374E /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		13B07F941A680F5B00A75B9A /* Debug */ = {
@@ -461,6 +606,45 @@
 			};
 			name = Release;
 		};
+		D9D21EC272DE4C5983E4F477 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = D8E2190AC7CDDE66500A395D /* Pods-NeurosignTests.debug.xcconfig */;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = AH73ADP3PW;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.neurosign.NeurosignTests;
+				PRODUCT_NAME = NeurosignTests;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/NeurosignExample.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/NeurosignExample";
+			};
+			name = Debug;
+		};
+		EF6B5AECBC1A05EAE09C13EA /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 50E485DDB207B30B6D768B5F /* Pods-NeurosignTests.release.xcconfig */;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = AH73ADP3PW;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.neurosign.NeurosignTests;
+				PRODUCT_NAME = NeurosignTests;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/NeurosignExample.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/NeurosignExample";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -478,6 +662,15 @@
 			buildConfigurations = (
 				83CBBA201A601CBA00E9B192 /* Debug */,
 				83CBBA211A601CBA00E9B192 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		E4E2E316EF537E52974DC020 /* Build configuration list for PBXNativeTarget "NeurosignTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				EF6B5AECBC1A05EAE09C13EA /* Release */,
+				D9D21EC272DE4C5983E4F477 /* Debug */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

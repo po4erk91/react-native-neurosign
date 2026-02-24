@@ -65,7 +65,7 @@ internal object PdfVerifier {
      * Search window size for /Contents hex string.
      * Must be large enough to encompass the placeholder size.
      */
-    private const val CONTENTS_SEARCH_WINDOW = 8192 * 2 + 2000
+    private const val CONTENTS_SEARCH_WINDOW = 16384 * 2 + 2000
 
     private fun parseByteRange(text: String): IntArray? {
         val regex = """/ByteRange\s*\[\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s*]""".toRegex()

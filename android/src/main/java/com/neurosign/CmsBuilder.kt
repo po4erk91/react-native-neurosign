@@ -29,16 +29,21 @@ import org.bouncycastle.cms.DefaultSignedAttributeTableGenerator
 import org.bouncycastle.cms.jcajce.JcaSignerInfoGeneratorBuilder
 import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder
 import org.bouncycastle.operator.jcajce.JcaDigestCalculatorProviderBuilder
+import org.bouncycastle.tsp.TimeStampRequestGenerator
+import org.bouncycastle.tsp.TimeStampResponse
+import java.net.HttpURLConnection
+import java.net.URL
 import java.security.MessageDigest
 
 /**
- * Builds CMS/PKCS#7 containers for PAdES-B-B digital signatures.
+ * Builds CMS/PKCS#7 containers for PAdES digital signatures.
  *
  * Handles:
  * - Auto-detection of signature algorithm (RSA, EC/ECDSA)
  * - ESSCertIDv2 (signing-certificate-v2) attribute for PAdES B-B compliance
  * - SHA-256 AlgorithmIdentifier fix for Adobe Acrobat compatibility
  * - Stripping of CMSAlgorithmProtection and signingTime attributes
+ * - Optional RFC 3161 timestamping for PAdES-B-T upgrade
  */
 internal object CmsBuilder {
 
@@ -47,11 +52,13 @@ internal object CmsBuilder {
      *
      * @param hash     Pre-computed SHA-256 hash of the PDF byte ranges
      * @param identity Signing identity (private key + certificate chain)
+     * @param tsaUrl   Optional TSA URL for RFC 3161 timestamping (PAdES-B-T)
      * @return DER-encoded CMS container bytes
      */
     fun buildCMSContainer(
         hash: ByteArray,
-        identity: CertificateManager.SigningIdentity
+        identity: CertificateManager.SigningIdentity,
+        tsaUrl: String? = null
     ): ByteArray {
         val certificate = identity.certificate
         val privateKey = identity.privateKey
@@ -124,17 +131,15 @@ internal object CmsBuilder {
         // Use CMSAbsentContent for detached signature
         val signedData = generator.generate(CMSAbsentContent(), false)
 
-        // Post-process: ensure SHA-256 AlgorithmIdentifier includes NULL parameter
-        return fixSha256AlgorithmIdentifier(signedData)
+        // Post-process: fix SHA-256 AlgorithmIdentifier and optionally add timestamp
+        return fixAndTimestamp(signedData, tsaUrl)
     }
 
     /**
-     * Fix SHA-256 AlgorithmIdentifier in CMS SignedData to include explicit NULL parameter.
-     *
-     * BouncyCastle encodes SHA-256 as: SEQUENCE { OID sha256 } (no NULL)
-     * Adobe Acrobat requires:          SEQUENCE { OID sha256, NULL }
+     * Fix SHA-256 AlgorithmIdentifier and optionally embed an RFC 3161 timestamp
+     * as an unauthenticated attribute (id-aa-signatureTimeStampToken).
      */
-    private fun fixSha256AlgorithmIdentifier(signedData: CMSSignedData): ByteArray {
+    private fun fixAndTimestamp(signedData: CMSSignedData, tsaUrl: String?): ByteArray {
         val contentInfo = signedData.toASN1Structure()
         val sd = SignedData.getInstance(contentInfo.content)
 
@@ -151,7 +156,7 @@ internal object CmsBuilder {
             }
         }
 
-        // Fix signerInfos
+        // Fix signerInfos (and optionally add timestamp as unauthenticated attribute)
         val fixedSignerInfos = ASN1EncodableVector()
         for (si in sd.signerInfos) {
             val signerInfo = SignerInfo.getInstance(si)
@@ -160,13 +165,28 @@ internal object CmsBuilder {
             } else {
                 signerInfo.digestAlgorithm
             }
+
+            // Determine unauthenticated attributes
+            val unauthAttrs = if (tsaUrl != null) {
+                val signatureBytes = signerInfo.encryptedDigest.octets
+                val timestampToken = requestTimestamp(signatureBytes, tsaUrl)
+                val tsTokenOid = ASN1ObjectIdentifier("1.2.840.113549.1.9.16.2.14")
+                val tsTokenContentInfo = timestampToken.timeStampToken.toCMSSignedData().toASN1Structure()
+                val tsAttr = Attribute(tsTokenOid, DERSet(tsTokenContentInfo))
+                val unauthVector = ASN1EncodableVector()
+                unauthVector.add(tsAttr)
+                DERSet(unauthVector)
+            } else {
+                signerInfo.unauthenticatedAttributes
+            }
+
             val fixedSignerInfo = SignerInfo(
                 signerInfo.sid,
                 fixedDigestAlg,
                 signerInfo.authenticatedAttributes,
                 signerInfo.digestEncryptionAlgorithm,
                 signerInfo.encryptedDigest,
-                signerInfo.unauthenticatedAttributes
+                unauthAttrs
             )
             fixedSignerInfos.add(fixedSignerInfo)
         }
@@ -182,5 +202,53 @@ internal object CmsBuilder {
 
         val fixedContentInfo = ContentInfo(contentInfo.contentType, fixedSD)
         return fixedContentInfo.getEncoded("DER")
+    }
+
+    /**
+     * Send an RFC 3161 timestamp request to a TSA server.
+     *
+     * @param signature The signature bytes to timestamp
+     * @param tsaUrl    The TSA server URL
+     * @return Parsed TimeStampResponse containing the TimeStampToken
+     */
+    private fun requestTimestamp(signature: ByteArray, tsaUrl: String): TimeStampResponse {
+        // Hash the signature with SHA-256
+        val sigHash = MessageDigest.getInstance("SHA-256").digest(signature)
+
+        // Build TimeStampRequest
+        val tsqGenerator = TimeStampRequestGenerator()
+        tsqGenerator.setCertReq(true)
+        val tsReq = tsqGenerator.generate(NISTObjectIdentifiers.id_sha256, sigHash)
+        val tsReqBytes = tsReq.encoded
+
+        // Send HTTP POST to TSA
+        val connection = URL(tsaUrl).openConnection() as HttpURLConnection
+        try {
+            connection.requestMethod = "POST"
+            connection.doOutput = true
+            connection.setRequestProperty("Content-Type", "application/timestamp-query")
+            connection.connectTimeout = 30_000
+            connection.readTimeout = 30_000
+
+            connection.outputStream.use { it.write(tsReqBytes) }
+
+            if (connection.responseCode != 200) {
+                throw IllegalStateException("TSA returned HTTP ${connection.responseCode}")
+            }
+
+            val responseBytes = connection.inputStream.use { it.readBytes() }
+            val tsResp = TimeStampResponse(responseBytes)
+            tsResp.validate(tsReq)
+
+            if (tsResp.timeStampToken == null) {
+                throw IllegalStateException(
+                    "TSA returned no token, status: ${tsResp.status}, failInfo: ${tsResp.failInfo}"
+                )
+            }
+
+            return tsResp
+        } finally {
+            connection.disconnect()
+        }
     }
 }

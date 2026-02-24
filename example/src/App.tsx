@@ -187,9 +187,12 @@ export default function App() {
       setDocuments((prev) => [newDoc, ...prev]);
       setActiveDocumentId(docId);
 
+      const sizeKB = result.fileSize
+        ? `${(result.fileSize / 1024).toFixed(1)} KB`
+        : 'unknown';
       Alert.alert(
         'PDF Generated',
-        `Created ${result.pageCount} page PDF\n${result.pdfUrl}`
+        `Created ${result.pageCount} page PDF\nSize: ${sizeKB}\n${result.pdfUrl}`
       );
       setScreen('pdf');
     } catch (error: any) {
@@ -332,6 +335,79 @@ export default function App() {
       console.warn('Failed to load certificates:', error.message);
     }
   }, []);
+
+  // ── Test: PAdES-B-T timestamp signing ──
+
+  const handleTestTimestamp = useCallback(async () => {
+    if (!pdfUrl) {
+      Alert.alert('Error', 'Generate a PDF first (Pick Images → Generate PDF)');
+      return;
+    }
+    try {
+      setIsLoading(true);
+
+      // 1. Generate a self-signed certificate
+      setLoadingText('1/3 Generating certificate...');
+      const cert = await Neurosign.generateSelfSignedCertificate({
+        commonName: 'TSA Test User',
+        organization: 'Neurosign TSA Test',
+        country: 'UA',
+        validityDays: 30,
+        alias: `tsa-test-${Date.now()}`,
+      });
+
+      // 2. Sign with TSA
+      setLoadingText('2/3 Signing with TSA (freetsa.org)...');
+      const signResult = await Neurosign.signPdf({
+        pdfUrl,
+        certificateType: 'keychain',
+        keychainAlias: cert.alias,
+        reason: 'PAdES-B-T timestamp test',
+        location: 'Neurosign CI',
+        contactInfo: 'test@neurosign.dev',
+        tsaUrl: 'https://freetsa.org/tsr',
+      });
+
+      // 3. Verify
+      setLoadingText('3/3 Verifying signature...');
+      const verifyResult2 = await Neurosign.verifySignature(signResult.pdfUrl);
+
+      // Cleanup test cert
+      try {
+        await Neurosign.deleteCertificate(cert.alias);
+      } catch {}
+
+      setSignedPdfUrl(signResult.pdfUrl);
+
+      if (activeDocumentId != null) {
+        setDocuments((prev) =>
+          prev.map((d) =>
+            d.id === activeDocumentId
+              ? { ...d, signed: true, signedPdfUrl: signResult.pdfUrl }
+              : d
+          )
+        );
+      }
+
+      const sigInfo = verifyResult2.signatures[0];
+      Alert.alert(
+        'PAdES-B-T Test Result',
+        `Signed: ${verifyResult2.signed}\n` +
+          `Signer: ${signResult.signerName}\n` +
+          `Signature valid: ${sigInfo?.valid ?? 'N/A'}\n` +
+          `Signed at: ${signResult.signedAt}\n\n` +
+          `TSA URL: freetsa.org/tsr\n` +
+          `Output: ${signResult.pdfUrl}`
+      );
+    } catch (error: any) {
+      Alert.alert(
+        'PAdES-B-T Test FAILED',
+        error.message || 'Unknown error'
+      );
+    } finally {
+      setIsLoading(false);
+    }
+  }, [pdfUrl, activeDocumentId]);
 
   // ── Step 6: Sign PDF with PAdES ──
 
@@ -728,6 +804,26 @@ export default function App() {
                   {signedPdfUrl || pdfUrl
                     ? 'Check signature validity'
                     : 'Sign a PDF first'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Timestamp Test</Text>
+              <TouchableOpacity
+                style={[
+                  styles.button,
+                  { backgroundColor: pdfUrl ? '#5856D6' : '#C7C7CC' },
+                ]}
+                onPress={handleTestTimestamp}
+              >
+                <Text style={styles.buttonText}>
+                  Test PAdES-B-T (freetsa.org)
+                </Text>
+                <Text style={styles.buttonHint}>
+                  {pdfUrl
+                    ? 'Sign current PDF with TSA timestamp, then verify'
+                    : 'Generate a PDF first'}
                 </Text>
               </TouchableOpacity>
             </View>

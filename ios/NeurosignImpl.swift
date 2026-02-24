@@ -74,54 +74,106 @@ public class NeurosignImpl: NSObject {
 
             let margin = CGFloat(pageMargin)
             let targetPageSize = self.pageSizeForName(pageSize)
-
-            let format = UIGraphicsPDFRendererFormat()
-            let renderer = UIGraphicsPDFRenderer(
-                bounds: CGRect(origin: .zero, size: targetPageSize),
-                format: format
-            )
+            let jpegQuality = CGFloat(min(max(quality, 0), 100) / 100.0)
 
             do {
-                var actualPageCount = 0
-                let pdfData = renderer.pdfData { context in
-                    for urlString in imageUrls {
-                        autoreleasepool {
-                            guard let image = self.loadImage(from: urlString) else { return }
-                            actualPageCount += 1
+                // Collect page data: JPEG bytes + layout info
+                struct PageInfo {
+                    let jpegData: Data
+                    let imgWidth: Int
+                    let imgHeight: Int
+                    let pageWidth: CGFloat
+                    let pageHeight: CGFloat
+                    let drawX: CGFloat
+                    let drawY: CGFloat
+                    let drawW: CGFloat
+                    let drawH: CGFloat
+                }
 
-                            if pageSize.uppercased() == "ORIGINAL" {
-                                let imgPageSize = CGSize(
-                                    width: image.size.width + margin * 2,
-                                    height: image.size.height + margin * 2
-                                )
-                                let pageBounds = CGRect(origin: .zero, size: imgPageSize)
-                                context.beginPage(withBounds: pageBounds, pageInfo: [:])
-                                let drawRect = CGRect(
-                                    x: margin,
-                                    y: margin,
-                                    width: image.size.width,
-                                    height: image.size.height
-                                )
-                                image.draw(in: drawRect)
-                            } else {
-                                context.beginPage()
-                                let drawableWidth = targetPageSize.width - margin * 2
-                                let drawableHeight = targetPageSize.height - margin * 2
-                                let drawRect = self.aspectFitRect(
-                                    for: image.size,
-                                    in: CGSize(width: drawableWidth, height: drawableHeight),
-                                    origin: CGPoint(x: margin, y: margin)
-                                )
-                                image.draw(in: drawRect)
-                            }
+                var pages: [PageInfo] = []
+
+                for urlString in imageUrls {
+                    autoreleasepool {
+                        guard let image = self.loadImage(from: urlString) else { return }
+
+                        let imgPixelW = Int(image.size.width * image.scale)
+                        let imgPixelH = Int(image.size.height * image.scale)
+
+                        let pageW: CGFloat
+                        let pageH: CGFloat
+                        let drawRect: CGRect
+
+                        if pageSize.uppercased() == "ORIGINAL" {
+                            pageW = image.size.width + margin * 2
+                            pageH = image.size.height + margin * 2
+                            drawRect = CGRect(x: margin, y: margin, width: image.size.width, height: image.size.height)
+                        } else {
+                            pageW = targetPageSize.width
+                            pageH = targetPageSize.height
+                            let drawableW = pageW - margin * 2
+                            let drawableH = pageH - margin * 2
+                            drawRect = self.aspectFitRect(
+                                for: image.size,
+                                in: CGSize(width: drawableW, height: drawableH),
+                                origin: CGPoint(x: margin, y: margin)
+                            )
                         }
+
+                        // Downsample if image is much larger than needed
+                        let targetPixelW = drawRect.width * 2  // 2x for good quality
+                        let targetPixelH = drawRect.height * 2
+                        let workingImage: UIImage
+                        if CGFloat(imgPixelW) > targetPixelW || CGFloat(imgPixelH) > targetPixelH {
+                            let ratio = min(targetPixelW / CGFloat(imgPixelW), targetPixelH / CGFloat(imgPixelH))
+                            let newSize = CGSize(width: floor(CGFloat(imgPixelW) * ratio), height: floor(CGFloat(imgPixelH) * ratio))
+                            // Force scale=1 so renderer uses exact pixel dimensions (not screen scale)
+                            let fmt = UIGraphicsImageRendererFormat()
+                            fmt.scale = 1.0
+                            let renderer = UIGraphicsImageRenderer(size: newSize, format: fmt)
+                            workingImage = renderer.image { _ in image.draw(in: CGRect(origin: .zero, size: newSize)) }
+                        } else {
+                            workingImage = image
+                        }
+
+                        guard let jpeg = workingImage.jpegData(compressionQuality: jpegQuality) else { return }
+
+                        // Get actual pixel dimensions of the JPEG we just created
+                        let finalW: Int
+                        let finalH: Int
+                        if workingImage !== image {
+                            finalW = Int(workingImage.size.width * workingImage.scale)
+                            finalH = Int(workingImage.size.height * workingImage.scale)
+                        } else {
+                            finalW = imgPixelW
+                            finalH = imgPixelH
+                        }
+
+                        pages.append(PageInfo(
+                            jpegData: jpeg,
+                            imgWidth: finalW,
+                            imgHeight: finalH,
+                            pageWidth: pageW,
+                            pageHeight: pageH,
+                            drawX: drawRect.origin.x,
+                            // PDF Y-axis is bottom-up
+                            drawY: pageH - drawRect.origin.y - drawRect.height,
+                            drawW: drawRect.width,
+                            drawH: drawRect.height
+                        ))
                     }
                 }
 
-                guard actualPageCount > 0 else {
+                guard !pages.isEmpty else {
                     rejecter("PDF_GENERATION_FAILED", "No images could be loaded from the provided URLs", nil)
                     return
                 }
+
+                // Build PDF with raw JPEG streams (DCTDecode) — same approach as Android
+                let pdfData = self.buildPdfWithJpegStreams(pages: pages.map { p in
+                    (jpegData: p.jpegData, imgWidth: p.imgWidth, imgHeight: p.imgHeight,
+                     pageWidth: p.pageWidth, pageHeight: p.pageHeight,
+                     drawX: p.drawX, drawY: p.drawY, drawW: p.drawW, drawH: p.drawH)
+                })
 
                 let outputFileName = fileName.hasSuffix(".pdf") ? fileName : "\(fileName).pdf"
                 let outputUrl = self.tempDirectory.appendingPathComponent(
@@ -131,12 +183,111 @@ public class NeurosignImpl: NSObject {
 
                 resolver([
                     "pdfUrl": outputUrl.absoluteString,
-                    "pageCount": actualPageCount,
+                    "pageCount": pages.count,
+                    "fileSize": pdfData.count,
                 ] as [String: Any])
             } catch {
                 rejecter("PDF_GENERATION_FAILED", error.localizedDescription, error)
             }
         }
+    }
+
+    /// Build a PDF file with raw JPEG image streams using /DCTDecode filter.
+    /// This avoids UIGraphicsPDFRenderer which re-encodes images as uncompressed bitmaps.
+    ///
+    /// PDF structure (same as Android PdfGenerator):
+    ///   1 0 obj - Catalog
+    ///   2 0 obj - Pages
+    ///   Per page i (0-based):
+    ///     (3+i*3) - Image XObject (JPEG)
+    ///     (4+i*3) - Content stream
+    ///     (5+i*3) - Page dictionary
+    private func buildPdfWithJpegStreams(
+        pages: [(jpegData: Data, imgWidth: Int, imgHeight: Int,
+                 pageWidth: CGFloat, pageHeight: CGFloat,
+                 drawX: CGFloat, drawY: CGFloat, drawW: CGFloat, drawH: CGFloat)]
+    ) -> Data {
+        var out = Data()
+        var offsets = [Int: Int]()
+        let numPages = pages.count
+        let totalObjects = 2 + numPages * 3
+
+        func ff(_ v: CGFloat) -> String { String(format: "%.4f", v) }
+        func append(_ str: String) { out.append(str.data(using: .isoLatin1)!) }
+
+        // Header
+        append("%PDF-1.4\n%\u{E2}\u{E3}\u{CF}\u{D3}\n")
+
+        // Write image XObjects and content streams
+        for i in 0..<numPages {
+            let pg = pages[i]
+            let imgObjNum = 3 + i * 3
+            let csObjNum = 4 + i * 3
+
+            // Image XObject with raw JPEG data
+            offsets[imgObjNum] = out.count
+            append("\(imgObjNum) 0 obj\n")
+            append("<< /Type /XObject /Subtype /Image\n")
+            append("/Width \(pg.imgWidth) /Height \(pg.imgHeight)\n")
+            append("/BitsPerComponent 8 /ColorSpace /DeviceRGB\n")
+            append("/Filter /DCTDecode /Length \(pg.jpegData.count) >>\n")
+            append("stream\n")
+            out.append(pg.jpegData)
+            append("\nendstream\nendobj\n")
+
+            // Content stream — place image on page
+            let csContent = "q\n\(ff(pg.drawW)) 0 0 \(ff(pg.drawH)) \(ff(pg.drawX)) \(ff(pg.drawY)) cm\n/Img Do\nQ\n"
+            let csBytes = csContent.data(using: .ascii)!
+            offsets[csObjNum] = out.count
+            append("\(csObjNum) 0 obj\n<< /Length \(csBytes.count) >>\nstream\n")
+            out.append(csBytes)
+            append("\nendstream\nendobj\n")
+        }
+
+        // Page objects
+        for i in 0..<numPages {
+            let pg = pages[i]
+            let pageObjNum = 5 + i * 3
+            let imgObjNum = 3 + i * 3
+            let csObjNum = 4 + i * 3
+
+            offsets[pageObjNum] = out.count
+            append("\(pageObjNum) 0 obj\n")
+            append("<< /Type /Page /Parent 2 0 R\n")
+            append("/MediaBox [0 0 \(ff(pg.pageWidth)) \(ff(pg.pageHeight))]\n")
+            append("/Contents \(csObjNum) 0 R\n")
+            append("/Resources << /XObject << /Img \(imgObjNum) 0 R >> >> >>\n")
+            append("endobj\n")
+        }
+
+        // Pages object
+        let pageObjNums = (0..<numPages).map { 5 + $0 * 3 }
+        let kidsStr = pageObjNums.map { "\($0) 0 R" }.joined(separator: " ")
+        offsets[2] = out.count
+        append("2 0 obj\n<< /Type /Pages /Kids [\(kidsStr)] /Count \(numPages) >>\nendobj\n")
+
+        // Catalog
+        offsets[1] = out.count
+        append("1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n")
+
+        // Cross-reference table
+        let xrefOffset = out.count
+        append("xref\n")
+        append("0 \(totalObjects + 1)\n")
+        append("0000000000 65535 f \n")
+        for objNum in 1...totalObjects {
+            let offset = offsets[objNum] ?? 0
+            append(String(format: "%010d 00000 n \n", offset))
+        }
+
+        // Trailer
+        append("trailer\n")
+        append("<< /Size \(totalObjects + 1) /Root 1 0 R >>\n")
+        append("startxref\n")
+        append("\(xrefOffset)\n")
+        append("%%EOF\n")
+
+        return out
     }
 
     // MARK: - addSignatureImage
@@ -329,6 +480,7 @@ public class NeurosignImpl: NSObject {
         reason: String,
         location: String,
         contactInfo: String,
+        tsaUrl: String?,
         resolver: @escaping RNResolver,
         rejecter: @escaping RNRejecter
     ) {
@@ -389,6 +541,7 @@ public class NeurosignImpl: NSObject {
                     reason: reason,
                     location: location,
                     contactInfo: contactInfo,
+                    tsaUrl: tsaUrl,
                     outputUrl: outputUrl
                 )
 

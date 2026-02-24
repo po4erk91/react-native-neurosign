@@ -17,6 +17,7 @@ enum PdfSignerError: Error, LocalizedError {
     case emptyCertificateChain
     case invalidByteRange
     case invalidDER(String)
+    case tsaRequestFailed(String)
 
     var errorDescription: String? {
         switch self {
@@ -32,6 +33,7 @@ enum PdfSignerError: Error, LocalizedError {
         case .emptyCertificateChain: return "Certificate chain is empty"
         case .invalidByteRange: return "ByteRange values exceed PDF data bounds"
         case .invalidDER(let msg): return "Invalid DER structure: \(msg)"
+        case .tsaRequestFailed(let msg): return "TSA timestamp request failed: \(msg)"
         }
     }
 }
@@ -43,17 +45,17 @@ enum PdfSignerError: Error, LocalizedError {
 /// Widget Annotation, cross-reference table, and CMS/PKCS#7 container.
 enum PdfSigner {
 
-    static let contentsPlaceholderSize = 8192
+    static let contentsPlaceholderSize = 16384
 
     // MARK: - PDF Structure Parsing
 
-    private struct TrailerInfo {
+    struct TrailerInfo {
         let rootObjNum: Int
         let size: Int
         let prevStartXref: Int
     }
 
-    private struct PageInfo {
+    struct PageInfo {
         let objNum: Int
         let dictContent: String
         let existingAnnotRefs: [String]?
@@ -81,9 +83,8 @@ enum PdfSigner {
     // MARK: - Trailer Parsing
 
     /// Parse the PDF trailer to extract /Root, /Size, and previous startxref.
-    private static func parseTrailer(in data: Data, eofPos: Int) -> TrailerInfo? {
-        let endIdx = min(eofPos + 10, data.count)
-        guard let text = String(data: data[0..<endIdx], encoding: .isoLatin1) else { return nil }
+    static func parseTrailer(in pdfText: String, eofPos: Int) -> TrailerInfo? {
+        let text = pdfText
 
         // Find startxref value
         guard let startxrefRange = text.range(of: "startxref", options: .backwards) else { return nil }
@@ -129,8 +130,8 @@ enum PdfSigner {
 
     /// Find the dictionary content of a PDF indirect object.
     /// Uses word-boundary check to avoid matching "12 0 obj" when searching for "2 0 obj".
-    private static func findObjectDict(in data: Data, objNum: Int) -> String? {
-        guard let text = String(data: data, encoding: .isoLatin1) else { return nil }
+    static func findObjectDict(in pdfText: String, objNum: Int) -> String? {
+        let text = pdfText
         let objHeader = "\(objNum) 0 obj"
 
         // Search for the LAST definition — critical for PDFs with incremental updates
@@ -180,17 +181,17 @@ enum PdfSigner {
     }
 
     /// Resolve first page object number from Root -> Pages -> Kids[0].
-    private static func findFirstPageObjNum(in data: Data, rootObjNum: Int) -> Int? {
-        guard let rootDict = findObjectDict(in: data, objNum: rootObjNum) else { return nil }
+    static func findFirstPageObjNum(in pdfText: String, rootObjNum: Int) -> Int? {
+        guard let rootDict = findObjectDict(in: pdfText, objNum: rootObjNum) else { return nil }
         guard let pagesNum = extractFirstInt(from: rootDict, pattern: #"/Pages\s+(\d+)\s+\d+\s+R"#) else { return nil }
-        guard let pagesDict = findObjectDict(in: data, objNum: pagesNum) else { return nil }
+        guard let pagesDict = findObjectDict(in: pdfText, objNum: pagesNum) else { return nil }
         guard let firstPageNum = extractFirstInt(from: pagesDict, pattern: #"/Kids\s*\[\s*(\d+)\s+\d+\s+R"#) else { return nil }
         return firstPageNum
     }
 
     /// Read page dictionary and extract existing /Annots references.
-    private static func readPageInfo(in data: Data, pageObjNum: Int) -> PageInfo? {
-        guard let dictContent = findObjectDict(in: data, objNum: pageObjNum) else { return nil }
+    static func readPageInfo(in pdfText: String, pageObjNum: Int) -> PageInfo? {
+        guard let dictContent = findObjectDict(in: pdfText, objNum: pageObjNum) else { return nil }
 
         var existingAnnotRefs: [String]? = nil
 
@@ -411,10 +412,9 @@ enum PdfSigner {
     }
 
     /// Generate a unique signature field name by checking existing fields.
-    private static func generateUniqueFieldName(in data: Data) -> String {
-        guard let text = String(data: data, encoding: .isoLatin1) else { return "Signature1" }
+    static func generateUniqueFieldName(in pdfText: String) -> String {
         var index = 1
-        while text.contains("/T (Signature\(index))") {
+        while pdfText.contains("/T (Signature\(index))") {
             index += 1
         }
         return "Signature\(index)"
@@ -438,24 +438,27 @@ enum PdfSigner {
         outputUrl: URL
     ) throws -> SigningPreparation {
         let pdfData = try Data(contentsOf: pdfUrl)
+        guard let pdfText = String(data: pdfData, encoding: .isoLatin1) else {
+            throw PdfSignerError.eofNotFound
+        }
 
         guard let eofRange = findEOF(in: pdfData) else {
             throw PdfSignerError.eofNotFound
         }
 
-        guard let trailer = parseTrailer(in: pdfData, eofPos: eofRange.lowerBound) else {
+        guard let trailer = parseTrailer(in: pdfText, eofPos: eofRange.lowerBound) else {
             throw PdfSignerError.cannotParseTrailer
         }
 
-        guard let firstPageNum = findFirstPageObjNum(in: pdfData, rootObjNum: trailer.rootObjNum) else {
+        guard let firstPageNum = findFirstPageObjNum(in: pdfText, rootObjNum: trailer.rootObjNum) else {
             throw PdfSignerError.cannotFindFirstPage
         }
 
-        guard let pageInfo = readPageInfo(in: pdfData, pageObjNum: firstPageNum) else {
+        guard let pageInfo = readPageInfo(in: pdfText, pageObjNum: firstPageNum) else {
             throw PdfSignerError.cannotReadPageInfo
         }
 
-        guard let rootDictContent = findObjectDict(in: pdfData, objNum: trailer.rootObjNum) else {
+        guard let rootDictContent = findObjectDict(in: pdfText, objNum: trailer.rootObjNum) else {
             throw PdfSignerError.cannotReadRootCatalog
         }
 
@@ -469,7 +472,7 @@ enum PdfSigner {
             }
         }
 
-        let fieldName = generateUniqueFieldName(in: pdfData)
+        let fieldName = generateUniqueFieldName(in: pdfText)
 
         let update = buildIncrementalUpdate(
             trailer: trailer,
@@ -520,6 +523,7 @@ enum PdfSigner {
         reason: String,
         location: String,
         contactInfo: String,
+        tsaUrl: String? = nil,
         outputUrl: URL
     ) throws {
         var prep = try preparePdfForSigning(
@@ -530,12 +534,13 @@ enum PdfSigner {
             outputUrl: outputUrl
         )
 
-        // Build CMS container
+        // Build CMS container (with optional RFC 3161 timestamp for PAdES-B-T)
         let cmsContainer = try buildCMSContainer(
             hash: prep.hash,
             privateKey: identity.privateKey,
             certificate: identity.certificateData,
-            certificateChain: identity.certificateChain
+            certificateChain: identity.certificateChain,
+            tsaUrl: tsaUrl
         )
 
         // Embed CMS into /Contents
@@ -613,7 +618,8 @@ enum PdfSigner {
 
     public static func verifySignatures(pdfUrl: URL) throws -> [SignatureInfo] {
         let pdfData = try Data(contentsOf: pdfUrl)
-        let signatures = findSignatureDictionaries(in: pdfData)
+        let pdfText = String(data: pdfData, encoding: .isoLatin1) ?? ""
+        let signatures = findSignatureDictionaries(in: pdfText)
 
         return signatures.compactMap { sigInfo -> SignatureInfo? in
             guard let contentsHex = sigInfo.contents,
@@ -770,7 +776,8 @@ enum PdfSigner {
         hash: Data,
         privateKey: SecKey,
         certificate: Data,
-        certificateChain: [SecCertificate]
+        certificateChain: [SecCertificate],
+        tsaUrl: String? = nil
     ) throws -> Data {
         guard !certificateChain.isEmpty else {
             throw PdfSignerError.emptyCertificateChain
@@ -806,6 +813,8 @@ enum PdfSigner {
                 error?.localizedDescription ?? "Unknown error"
             )
         }
+        // Release CFError if set on success path (unlikely but defensive)
+        if signError != nil { _ = signError!.takeRetainedValue() }
 
         var signedData = Data()
 
@@ -847,6 +856,19 @@ enum PdfSigner {
         signerInfo.append(contentsOf: CMSBuilder.sequence(sigAlgo))
 
         signerInfo.append(contentsOf: CMSBuilder.octetString(signature))
+
+        // RFC 3161 timestamp: add id-aa-signatureTimeStampToken as unauthenticated attribute
+        if let tsaUrlString = tsaUrl, let tsaURL = URL(string: tsaUrlString) {
+            let timestampToken = try requestTimestamp(signature: signature, tsaUrl: tsaURL)
+            // OID 1.2.840.113549.1.9.16.2.14 (id-aa-signatureTimeStampToken)
+            let tsTokenOid: [UInt8] = [0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x09, 0x10, 0x02, 0x0E]
+            var tsAttr = CMSBuilder.oid(tsTokenOid)
+            // The value is a SET containing the raw TimeStampToken (ContentInfo) as-is
+            tsAttr.append(contentsOf: CMSBuilder.set(timestampToken))
+            let unauthAttrs = CMSBuilder.sequence(tsAttr)
+            // [1] IMPLICIT SET OF Attribute
+            signerInfo.append(contentsOf: CMSBuilder.contextTag(1, value: unauthAttrs))
+        }
 
         let signerInfoSet = CMSBuilder.set(CMSBuilder.sequence(signerInfo))
         signedData.append(contentsOf: signerInfoSet)
@@ -961,7 +983,7 @@ enum PdfSigner {
     // MARK: - PDF Helpers
 
     /// Find %%EOF marker, searching only the last 1024 bytes per PDF spec.
-    private static func findEOF(in data: Data) -> Range<Int>? {
+    static func findEOF(in data: Data) -> Range<Int>? {
         let eofMarker = [UInt8]("%%EOF".utf8)
         let searchStart = max(0, data.count - 1024)
 
@@ -1033,7 +1055,7 @@ enum PdfSigner {
 
     /// Escape special characters in PDF string literals.
     /// Handles backslash, parentheses, newline, carriage return, and tab.
-    private static func escapePdfString(_ string: String) -> String {
+    static func escapePdfString(_ string: String) -> String {
         return string
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "(", with: "\\(")
@@ -1045,14 +1067,14 @@ enum PdfSigner {
 
     // MARK: - Int Extraction Helpers
 
-    private static func extractFirstInt(from text: String, after prefix: String) -> Int? {
+    static func extractFirstInt(from text: String, after prefix: String) -> Int? {
         guard let prefixRange = text.range(of: prefix) else { return nil }
         let afterPrefix = text[prefixRange.upperBound...].trimmingCharacters(in: .whitespaces)
         let numStr = afterPrefix.prefix(while: { $0.isNumber })
         return Int(numStr)
     }
 
-    private static func extractFirstInt(from text: String, pattern: String) -> Int? {
+    static func extractFirstInt(from text: String, pattern: String) -> Int? {
         guard let regex = try? NSRegularExpression(pattern: pattern),
               let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
               match.numberOfRanges > 1,
@@ -1110,7 +1132,7 @@ enum PdfSigner {
 
     // MARK: - Signature Verification Parsing
 
-    private struct ParsedSignature {
+    struct ParsedSignature {
         let contents: String?
         let byteRange: (Int, Int, Int, Int)?
         let name: String?
@@ -1118,15 +1140,14 @@ enum PdfSigner {
         let reason: String?
     }
 
-    private static func findSignatureDictionaries(in data: Data) -> [ParsedSignature] {
-        let text = String(data: data, encoding: .isoLatin1) ?? ""
+    static func findSignatureDictionaries(in pdfText: String) -> [ParsedSignature] {
         var results: [ParsedSignature] = []
 
-        var searchRange = text.startIndex..<text.endIndex
-        while let range = text.range(of: "/Type /Sig", range: searchRange) {
-            let contextStart = text.index(range.lowerBound, offsetBy: -500, limitedBy: text.startIndex) ?? text.startIndex
-            let contextEnd = text.index(range.upperBound, offsetBy: contentsPlaceholderSize * 2 + 2000, limitedBy: text.endIndex) ?? text.endIndex
-            let context = String(text[contextStart..<contextEnd])
+        var searchRange = pdfText.startIndex..<pdfText.endIndex
+        while let range = pdfText.range(of: "/Type /Sig", range: searchRange) {
+            let contextStart = pdfText.index(range.lowerBound, offsetBy: -500, limitedBy: pdfText.startIndex) ?? pdfText.startIndex
+            let contextEnd = pdfText.index(range.upperBound, offsetBy: contentsPlaceholderSize * 2 + 2000, limitedBy: pdfText.endIndex) ?? pdfText.endIndex
+            let context = String(pdfText[contextStart..<contextEnd])
 
             let byteRange = parseByteRange(from: context)
             let contents = parseContents(from: context)
@@ -1140,13 +1161,13 @@ enum PdfSigner {
                 reason: reason
             ))
 
-            searchRange = range.upperBound..<text.endIndex
+            searchRange = range.upperBound..<pdfText.endIndex
         }
 
         return results
     }
 
-    private static func parseByteRange(from text: String) -> (Int, Int, Int, Int)? {
+    static func parseByteRange(from text: String) -> (Int, Int, Int, Int)? {
         guard let match = text.range(of: #"/ByteRange\s*\[\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s*\]"#, options: .regularExpression) else {
             return nil
         }
@@ -1158,7 +1179,7 @@ enum PdfSigner {
         return (numbers[0], numbers[1], numbers[2], numbers[3])
     }
 
-    private static func parseContents(from text: String) -> String? {
+    static func parseContents(from text: String) -> String? {
         guard let startRange = text.range(of: "/Contents <") else { return nil }
         let afterStart = startRange.upperBound
         guard let endRange = text[afterStart...].range(of: ">") else { return nil }
@@ -1166,7 +1187,7 @@ enum PdfSigner {
     }
 
     /// Parse a PDF string field, handling escaped and balanced parentheses.
-    private static func parseField(named field: String, from text: String) -> String? {
+    static func parseField(named field: String, from text: String) -> String? {
         guard let range = text.range(of: "/\(field) (") else { return nil }
         let afterStart = range.upperBound
         var depth = 1
@@ -1193,7 +1214,7 @@ enum PdfSigner {
         return nil
     }
 
-    private static func hexToData(_ hex: String) -> Data? {
+    static func hexToData(_ hex: String) -> Data? {
         let cleaned = hex.trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: " ", with: "")
         guard cleaned.count % 2 == 0 else { return nil }
@@ -1252,6 +1273,173 @@ enum PdfSigner {
         // Guard against maliciously large length values
         let result = pos + length
         return min(result, bytes.count)
+    }
+}
+
+// MARK: - RFC 3161 Timestamp
+
+extension PdfSigner {
+
+    /// Request an RFC 3161 timestamp token from a TSA server.
+    /// Returns the raw DER-encoded TimeStampToken (a CMS ContentInfo).
+    private static func requestTimestamp(signature: Data, tsaUrl: URL) throws -> Data {
+        // 1. Hash the signature value with SHA-256
+        var sigHash = Data(count: Int(CC_SHA256_DIGEST_LENGTH))
+        signature.withUnsafeBytes { sigPtr in
+            sigHash.withUnsafeMutableBytes { hashPtr in
+                CC_SHA256(sigPtr.baseAddress, CC_LONG(signature.count),
+                          hashPtr.bindMemory(to: UInt8.self).baseAddress)
+            }
+        }
+
+        // 2. Build TimeStampReq (RFC 3161 Section 2.4.1)
+        let tsaReq = buildTimeStampReq(messageImprint: sigHash)
+
+        // 3. Send HTTP POST to TSA
+        let tsaResp = try sendTSARequest(tsaReq, to: tsaUrl)
+
+        // 4. Parse TimeStampResp and extract TimeStampToken
+        return try parseTimeStampResp(tsaResp)
+    }
+
+    /// Build an ASN.1 DER-encoded TimeStampReq.
+    ///
+    /// TimeStampReq ::= SEQUENCE {
+    ///   version          INTEGER { v1(1) },
+    ///   messageImprint   MessageImprint,
+    ///   certReq          BOOLEAN DEFAULT FALSE
+    /// }
+    ///
+    /// MessageImprint ::= SEQUENCE {
+    ///   hashAlgorithm    AlgorithmIdentifier,
+    ///   hashedMessage    OCTET STRING
+    /// }
+    private static func buildTimeStampReq(messageImprint: Data) -> Data {
+        let sha256Oid: [UInt8] = [0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01]
+        var hashAlgo = CMSBuilder.oid(sha256Oid)
+        hashAlgo.append(contentsOf: CMSBuilder.null())
+        let hashAlgoSeq = CMSBuilder.sequence(hashAlgo)
+
+        var msgImprint = hashAlgoSeq
+        msgImprint.append(contentsOf: CMSBuilder.octetString(messageImprint))
+        let msgImprintSeq = CMSBuilder.sequence(msgImprint)
+
+        var reqContent = Data()
+        reqContent.append(contentsOf: CMSBuilder.integer(Data([0x01]))) // version 1
+        reqContent.append(contentsOf: msgImprintSeq)
+        // certReq = TRUE so TSA includes its certificate
+        reqContent.append(contentsOf: Data([0x01, 0x01, 0xFF]))
+
+        return CMSBuilder.sequence(reqContent)
+    }
+
+    /// Send a TimeStampReq to the TSA via HTTP POST (synchronous).
+    private static func sendTSARequest(_ request: Data, to url: URL) throws -> Data {
+        var httpRequest = URLRequest(url: url)
+        httpRequest.httpMethod = "POST"
+        httpRequest.setValue("application/timestamp-query", forHTTPHeaderField: "Content-Type")
+        httpRequest.httpBody = request
+        httpRequest.timeoutInterval = 30
+
+        var responseData: Data?
+        var responseError: Error?
+        let semaphore = DispatchSemaphore(value: 0)
+
+        let task = URLSession.shared.dataTask(with: httpRequest) { data, response, error in
+            if let error = error {
+                responseError = error
+            } else if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode != 200 {
+                responseError = PdfSignerError.tsaRequestFailed(
+                    "TSA returned HTTP \(httpResponse.statusCode)"
+                )
+            } else {
+                responseData = data
+            }
+            semaphore.signal()
+        }
+        task.resume()
+        semaphore.wait()
+
+        if let error = responseError {
+            throw error
+        }
+        guard let data = responseData, !data.isEmpty else {
+            throw PdfSignerError.tsaRequestFailed("Empty response from TSA")
+        }
+        return data
+    }
+
+    /// Parse a TimeStampResp and extract the TimeStampToken (ContentInfo).
+    ///
+    /// TimeStampResp ::= SEQUENCE {
+    ///   status          PKIStatusInfo,
+    ///   timeStampToken  TimeStampToken OPTIONAL
+    /// }
+    ///
+    /// PKIStatusInfo ::= SEQUENCE {
+    ///   status    PKIStatus (INTEGER),
+    ///   ...
+    /// }
+    ///
+    /// Returns the raw DER bytes of the TimeStampToken ContentInfo.
+    private static func parseTimeStampResp(_ data: Data) throws -> Data {
+        let bytes = [UInt8](data)
+        guard bytes.count > 4 else {
+            throw PdfSignerError.tsaRequestFailed("TSA response too short")
+        }
+
+        // Outer SEQUENCE
+        guard bytes[0] == 0x30 else {
+            throw PdfSignerError.tsaRequestFailed("Invalid TSA response: expected SEQUENCE")
+        }
+        let (outerContentStart, _) = parseDERLength(bytes, offset: 1)
+
+        // First element: PKIStatusInfo SEQUENCE
+        guard outerContentStart < bytes.count, bytes[outerContentStart] == 0x30 else {
+            throw PdfSignerError.tsaRequestFailed("Invalid TSA response: expected PKIStatusInfo")
+        }
+        let (statusSeqContentStart, statusSeqContentLen) = parseDERLength(bytes, offset: outerContentStart + 1)
+        let statusSeqEnd = statusSeqContentStart + statusSeqContentLen
+
+        // Read status INTEGER from PKIStatusInfo
+        guard statusSeqContentStart < bytes.count, bytes[statusSeqContentStart] == 0x02 else {
+            throw PdfSignerError.tsaRequestFailed("Invalid PKIStatusInfo: expected INTEGER")
+        }
+        let (statusValueStart, statusValueLen) = parseDERLength(bytes, offset: statusSeqContentStart + 1)
+        guard statusValueLen > 0 else {
+            throw PdfSignerError.tsaRequestFailed("Invalid PKIStatusInfo: empty status")
+        }
+        let status = Int(bytes[statusValueStart])
+        // status 0 = granted, 1 = grantedWithMods — both are acceptable
+        guard status == 0 || status == 1 else {
+            throw PdfSignerError.tsaRequestFailed("TSA rejected request with status \(status)")
+        }
+
+        // Second element: TimeStampToken (starts right after PKIStatusInfo)
+        guard statusSeqEnd < bytes.count else {
+            throw PdfSignerError.tsaRequestFailed("TSA response missing TimeStampToken")
+        }
+
+        // Return the remaining bytes as the TimeStampToken
+        return Data(bytes[statusSeqEnd...])
+    }
+
+    /// Parse a DER length field starting at `offset`.
+    /// Returns (contentStart, contentLength).
+    static func parseDERLength(_ bytes: [UInt8], offset: Int) -> (Int, Int) {
+        guard offset < bytes.count else { return (offset, 0) }
+        let firstByte = bytes[offset]
+        if firstByte < 0x80 {
+            return (offset + 1, Int(firstByte))
+        }
+        let numLenBytes = Int(firstByte & 0x7F)
+        guard numLenBytes > 0, numLenBytes <= 4 else { return (offset + 1, 0) }
+        var length = 0
+        for i in 0..<numLenBytes {
+            guard offset + 1 + i < bytes.count else { return (offset + 1 + numLenBytes, 0) }
+            length = (length << 8) | Int(bytes[offset + 1 + i])
+        }
+        return (offset + 1 + numLenBytes, length)
     }
 }
 

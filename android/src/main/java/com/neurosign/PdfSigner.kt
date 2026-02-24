@@ -18,7 +18,7 @@ import java.util.*
  */
 object PdfSigner {
 
-    private const val CONTENTS_PLACEHOLDER_SIZE = 8192
+    private const val CONTENTS_PLACEHOLDER_SIZE = 16384
 
     // MARK: - Data Types
 
@@ -58,6 +58,7 @@ object PdfSigner {
         reason: String,
         location: String,
         contactInfo: String,
+        tsaUrl: String? = null,
         outputFile: File
     ) {
         val pdfBytes = pdfFile.readBytes()
@@ -81,7 +82,8 @@ object PdfSigner {
             reason = reason,
             location = location,
             contactInfo = contactInfo,
-            appendOffset = appendPoint
+            appendOffset = appendPoint,
+            pdfText = pdfText
         )
 
         var fullPdf = ByteArray(appendPoint + update.bytes.size)
@@ -109,8 +111,8 @@ object PdfSigner {
         if (byteRange[3] > 0) digest.update(fullPdf, byteRange[2], byteRange[3])
         val hash = digest.digest()
 
-        // Build CMS container and embed
-        val cmsContainer = CmsBuilder.buildCMSContainer(hash, identity)
+        // Build CMS container (with optional RFC 3161 timestamp for PAdES-B-T)
+        val cmsContainer = CmsBuilder.buildCMSContainer(hash, identity, tsaUrl)
         val hexEncoded = cmsContainer.joinToString("") { "%02x".format(it) }
         val paddedHex = hexEncoded.padEnd(CONTENTS_PLACEHOLDER_SIZE * 2, '0')
         PdfParser.replaceBytes(
@@ -152,7 +154,8 @@ object PdfSigner {
             reason = reason,
             location = location,
             contactInfo = contactInfo,
-            appendOffset = appendPoint
+            appendOffset = appendPoint,
+            pdfText = pdfText
         )
 
         val fullPdf = ByteArray(appendPoint + update.bytes.size)
@@ -228,6 +231,14 @@ object PdfSigner {
 
     // MARK: - Private: Incremental Update Builder
 
+    private fun generateUniqueFieldName(pdfText: String): String {
+        var index = 1
+        while (pdfText.contains("/T (Signature$index)")) {
+            index++
+        }
+        return "Signature$index"
+    }
+
     private fun buildIncrementalUpdate(
         trailer: PdfParser.TrailerInfo,
         pageInfo: PdfParser.PageInfo,
@@ -235,7 +246,8 @@ object PdfSigner {
         reason: String,
         location: String,
         contactInfo: String,
-        appendOffset: Int
+        appendOffset: Int,
+        pdfText: String
     ): IncrementalUpdateResult {
         val sigObjNum = trailer.size
         val fieldObjNum = trailer.size + 1
@@ -283,7 +295,7 @@ object PdfSigner {
         body.append("/Type /Annot\n")
         body.append("/Subtype /Widget\n")
         body.append("/FT /Sig\n")
-        body.append("/T (Signature1)\n")
+        body.append("/T (${generateUniqueFieldName(pdfText)})\n")
         body.append("/V $sigObjNum 0 R\n")
         body.append("/Rect [0 0 0 0]\n")
         body.append("/F 132\n")
@@ -401,8 +413,9 @@ object PdfSigner {
         body.append("$xrefOffset\n")
         body.append("%%EOF\n")
 
-        val bodyBytes = body.toString().toByteArray(Charsets.US_ASCII)
-        val brOffset = body.toString().indexOf(byteRangePlaceholder)
+        val bodyString = body.toString()
+        val bodyBytes = bodyString.toByteArray(Charsets.US_ASCII)
+        val brOffset = bodyString.indexOf(byteRangePlaceholder)
 
         return IncrementalUpdateResult(
             bytes = bodyBytes,

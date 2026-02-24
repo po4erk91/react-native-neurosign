@@ -105,6 +105,7 @@ class NeurosignModule(reactContext: ReactApplicationContext) :
                 val result = Arguments.createMap().apply {
                     putString("pdfUrl", "file://${outputFile.absolutePath}")
                     putInt("pageCount", pages.size)
+                    putInt("fileSize", outputFile.length().toInt())
                 }
                 promise.resolve(result)
             } catch (e: Exception) {
@@ -330,6 +331,7 @@ class NeurosignModule(reactContext: ReactApplicationContext) :
 
         scope.launch {
             try {
+                var tempCertAlias: String? = null
                 val identity: CertificateManager.SigningIdentity = when (certificateType) {
                     "p12" -> {
                         val path = options.getString("certificatePath")
@@ -345,6 +347,7 @@ class NeurosignModule(reactContext: ReactApplicationContext) :
                     }
                     "selfSigned" -> {
                         val alias = "temp_selfsigned_${UUID.randomUUID().toString().take(8)}"
+                        tempCertAlias = alias
                         CertificateManager.generateSelfSigned(
                             commonName = "Neurosign User",
                             organization = "",
@@ -361,6 +364,7 @@ class NeurosignModule(reactContext: ReactApplicationContext) :
                 val reason = if (options.hasKey("reason")) options.getString("reason") ?: "" else ""
                 val location = if (options.hasKey("location")) options.getString("location") ?: "" else ""
                 val contactInfo = if (options.hasKey("contactInfo")) options.getString("contactInfo") ?: "" else ""
+                val tsaUrl = if (options.hasKey("tsaUrl")) options.getString("tsaUrl") else null
 
                 val baseName = pdfFile.nameWithoutExtension.removeSuffix("_signed").removeSuffix("_visual")
                 val outputFile = File(tempDir, "${baseName}_signed.pdf")
@@ -371,8 +375,14 @@ class NeurosignModule(reactContext: ReactApplicationContext) :
                     reason = reason,
                     location = location,
                     contactInfo = contactInfo,
+                    tsaUrl = tsaUrl,
                     outputFile = outputFile
                 )
+
+                // Clean up temp self-signed certificate from KeyStore
+                tempCertAlias?.let { alias ->
+                    try { CertificateManager.deleteCertificate(alias) } catch (_: Exception) {}
+                }
 
                 val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.US)
                 dateFormat.timeZone = java.util.TimeZone.getTimeZone("UTC")

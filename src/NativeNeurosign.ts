@@ -48,6 +48,7 @@ export interface Spec extends TurboModule {
   }): Promise<{
     pdfUrl: string;
     pageCount: number;
+    fileSize: number;
   }>;
 
   /**
@@ -80,10 +81,13 @@ export interface Spec extends TurboModule {
   }>;
 
   /**
-   * Apply a PAdES-B-B digital signature to a PDF document.
+   * Apply a PAdES digital signature to a PDF document.
    * Embeds a CMS/PKCS#7 signature container into the PDF.
    *
-   * iOS: Security.framework + OpenSSL for CMS
+   * When `tsaUrl` is provided, an RFC 3161 timestamp is embedded,
+   * upgrading the signature from PAdES-B-B to PAdES-B-T.
+   *
+   * iOS: Security.framework for CMS
    * Android: java.security + BouncyCastle for CMS
    */
   signPdf(options: {
@@ -101,6 +105,7 @@ export interface Spec extends TurboModule {
     signatureY?: number;
     signatureWidth?: number;
     signatureHeight?: number;
+    tsaUrl?: string;
   }): Promise<{
     pdfUrl: string;
     signatureValid: boolean;

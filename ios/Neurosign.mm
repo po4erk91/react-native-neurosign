@@ -132,6 +132,7 @@
     NSString *reason = options.reason() ?: @"";
     NSString *location = options.location() ?: @"";
     NSString *contactInfo = options.contactInfo() ?: @"";
+    NSString *tsaUrl = options.tsaUrl();
 
     [_impl signPdfWithPdfUrl:pdfUrl
              certificateType:certificateType
@@ -141,6 +142,7 @@
                       reason:reason
                     location:location
                  contactInfo:contactInfo
+                      tsaUrl:tsaUrl
                     resolver:^(NSDictionary *result) {
         resolve(result);
     } rejecter:^(NSString *code, NSString *message, NSError *error) {
