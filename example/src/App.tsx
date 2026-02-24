@@ -400,10 +400,7 @@ export default function App() {
           `Output: ${signResult.pdfUrl}`
       );
     } catch (error: any) {
-      Alert.alert(
-        'PAdES-B-T Test FAILED',
-        error.message || 'Unknown error'
-      );
+      Alert.alert('PAdES-B-T Test FAILED', error.message || 'Unknown error');
     } finally {
       setIsLoading(false);
     }
